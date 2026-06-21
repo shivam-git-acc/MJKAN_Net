@@ -1,0 +1,7 @@
+description: "9-class behavioral SupCon baseline — SSM encoder, no context features"
+train_script: src/supcon+9class/baseline/supcon+9class_baseline_train.py
+eval_script: src/supcon+9class/baseline/supcoN+9class_baseline_test.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: behavioral9+supcon/data
+hf_model_folder: behavioral9+supcon
+checkpoint_name: supcon_best.pt

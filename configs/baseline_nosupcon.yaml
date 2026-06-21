@@ -1,0 +1,7 @@
+description: "Baseline (no SupCon) — SSM encoder + linear head, 6-class, no contrastive learning"
+train_script: src/baseline_with_eval
+eval_script: src/baseline_nosupcon_eval
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: baseline6classdata
+hf_model_folder: baseline_nosupcon
+checkpoint_name: baseline_best.pt

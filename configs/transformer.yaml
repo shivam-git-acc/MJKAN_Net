@@ -1,0 +1,7 @@
+description: "Transformer encoder variant — replaces SSM with Transformer; tests if attention pushes accuracy >0.90"
+train_script: src/supcon+9class/transformer_variant/transformer_train
+eval_script: src/supcon+9class/transformer_variant/transformer_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: transformer
+checkpoint_name: transformer_best.pt

@@ -1,0 +1,7 @@
+description: "V7+DANN — Fine-tunes V7 with app-level domain adversarial training (12 epochs)"
+train_script: src/supcon+9class/V7withDANN/finetunev7withdann
+eval_script: src/supcon+9class/V7withDANN/V7_DANN_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v7_dann
+checkpoint_name: v7_appdann.pt

@@ -1,0 +1,8 @@
+description: "V7 — FiLM + inter-cosine separation loss (best pre-MJKAN accuracy)"
+train_script: src/supcon+9class/V7/V6withFilm_intercosine.py
+eval_script: src/supcon+9class/V7/V7test.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_5g_path: protocol_invariance/data/fiveg_youtube.npz
+hf_model_folder: protocol_invariance/v7_sep
+checkpoint_name: v7_best.pt

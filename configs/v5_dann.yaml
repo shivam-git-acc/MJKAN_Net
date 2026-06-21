@@ -1,0 +1,7 @@
+description: "V5-DANN — Domain Adversarial Neural Network attacking z embedding with GRL for protocol invariance"
+train_script: src/supcon+9class/V5_DANN/V5_train.py
+eval_script: src/supcon+9class/V5_DANN/V5_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v5_dann
+checkpoint_name: v5z_dann_best.pt

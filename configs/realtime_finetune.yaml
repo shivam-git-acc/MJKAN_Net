@@ -1,0 +1,7 @@
+description: "Realtime fine-tune — fine-tunes realtime model on updated data; loads base checkpoint from HF"
+train_script: src/supcon+9class/REAL_TIME_VAR/combinedrealtimefinetune.py
+eval_script: src/supcon+9class/REAL_TIME_VAR/realtime_finetune_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: realtime_joint_temporal
+hf_model_folder: realtime_joint_temporal
+checkpoint_name: rtjt_best_v2.pt

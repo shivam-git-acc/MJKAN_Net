@@ -1,0 +1,7 @@
+description: "6-class protocol baseline — SupCon with SSM encoder on 6 protocol classes"
+train_script: src/baseline+supcon_6class/baseline+supcon_train.py
+eval_script: src/baseline+supcon_6class/eval+on_zspace.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: baseline6classdata
+hf_model_folder: baseline+supcon
+checkpoint_name: supcon_best.pt

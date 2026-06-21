@@ -1,0 +1,7 @@
+description: "V1 — Joint QUIC+TLS SupCon with natural cross-protocol positives"
+train_script: src/supcon+9class/V1/V1_train.py
+eval_script: src/supcon+9class/V1/V1_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v1_joint
+checkpoint_name: v1_best.pt

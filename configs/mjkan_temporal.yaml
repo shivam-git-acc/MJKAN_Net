@@ -1,0 +1,7 @@
+description: "MJKAN temporal — MJKAN trained on temporally-split QUIC+TLS data for drift robustness"
+train_script: src/supcon+9class/MJKAN_variants/temporal_robust/MJKAN_temporal_train.py
+eval_script: src/supcon+9class/MJKAN_variants/temporal_robust/MJKAN_temporal_test.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: combined_temporal/data
+hf_model_folder: combined_temporal
+checkpoint_name: combined_temporal_best.pt

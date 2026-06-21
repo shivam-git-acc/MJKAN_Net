@@ -1,0 +1,7 @@
+description: "V3 — Cross-protocol balanced sampler ensuring same service across protocols per batch"
+train_script: src/supcon+9class/V3/V3_protocolbalanced_supcon_train
+eval_script: src/supcon+9class/V3/V3_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v3_joint
+checkpoint_name: v3_best.pt

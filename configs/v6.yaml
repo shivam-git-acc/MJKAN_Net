@@ -1,0 +1,7 @@
+description: "V6 — FiLM + spread losses (uniformity + centroid separation), tau=0.05"
+train_script: src/supcon+9class/V6/V6_intercosine_best.py
+eval_script: src/supcon+9class/V6/V6_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v6
+checkpoint_name: v6_best.pt

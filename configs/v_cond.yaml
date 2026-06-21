@@ -1,0 +1,8 @@
+description: "V-COND — Condition-invariant training with timing augmentation + GatedFiLM; validates on 5G"
+train_script: src/supcon+9class/conditioninvariance/V_COND_train
+eval_script: src/supcon+9class/conditioninvariance/V_COND_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_5g_path: protocol_invariance/data/fiveg_youtube.npz
+hf_model_folder: v_cond
+checkpoint_name: v_cond_best.pt

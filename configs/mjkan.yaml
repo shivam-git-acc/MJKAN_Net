@@ -1,0 +1,7 @@
+description: "MJKAN (main model) — SSM + GatedFiLM + FasterKAN reasoning + SupCon; joint QUIC+TLS 9-class"
+train_script: src/supcon+9class/MJKAN_variants/MJKAN_typical_traintest.py
+eval_script: src/supcon+9class/MJKAN_variants/MJKAN_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: mjkan
+checkpoint_name: mjkan_best.pt

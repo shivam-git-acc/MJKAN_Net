@@ -1,0 +1,7 @@
+description: "V2 — FiLM conditioning on 6-feature context (RTT, jitter, flow metadata)"
+train_script: src/supcon+9class/V2/V2_Film_train.py
+eval_script: src/supcon+9class/V2/V2_test.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: protocol_invariance/v2_film
+checkpoint_name: v2_film_best.pt

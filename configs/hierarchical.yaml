@@ -1,0 +1,7 @@
+description: "Hierarchical SupCon — class centroid separation + super-group centroid separation"
+train_script: src/supcon+9class/hierarchical_variant/heirarchicaltrain.py
+eval_script: src/supcon+9class/hierarchical_variant/hierarchical_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: protocol_invariance/data
+hf_model_folder: hierarchical
+checkpoint_name: hierarchical_best.pt

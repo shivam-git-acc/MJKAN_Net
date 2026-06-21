@@ -1,0 +1,7 @@
+description: "Held-out class experiment — SupCon trained on 5 classes, eval on unseen 6th class"
+train_script: src/baseline+supcon_6class/held_out_class_train.py
+eval_script: src/baseline+supcon_6class/held_out_class_test.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: baseline6classdata
+hf_model_folder: baseline+supcon
+checkpoint_name: supcon_heldout.pt

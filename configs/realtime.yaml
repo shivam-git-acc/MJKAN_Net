@@ -1,0 +1,7 @@
+description: "Realtime — MJKAN trained on realtime joint temporal dataset for low-latency inference"
+train_script: src/supcon+9class/REAL_TIME_VAR/combinedrealtimetrain.py
+eval_script: src/supcon+9class/REAL_TIME_VAR/realtime_eval.py
+hf_repo: donbosoc/shigan-mjkan-baseline
+hf_data_folder: realtime_joint_temporal
+hf_model_folder: realtime_joint_temporal
+checkpoint_name: rtjt_best.pt
