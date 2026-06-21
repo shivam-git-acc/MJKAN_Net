@@ -106,11 +106,7 @@ http://localhost:8000/demo_viewer.html
 
 #### Setup & Result Reproducibility Video
 
-To ensure reproducibility of results and to verify the presented KPIs, we require you to create a video demonstrating:
-- Step by step project installation,
-- Data/model download steps, 
-- Execution of all required codes to train the developed models (if any)
-- Execution of all evaluation codes to reproduce the presented results/KPIs 
+[*Shigan_SetupandReproducibilityVideo_google_drive_link*](https://drive.google.com/file/d/1CTqGVeMhJGJvXiDAmIWublYoo5UiO35S/view?usp=sharing)
 
 ### Attribution 
 
