@@ -24,7 +24,7 @@ See [docs/installation.md](docs/installation.md) and [docs/user_guide.md](docs/u
 
 ## Development Timeline & GitHub Push Note
 
-> **Why does this repo have a single GitHub push?**
+> **Why does this repo have a single day GitHub pushes?**
 
 All development was done on **Kaggle notebooks** (the CESNET datasets are ~90 GB — not practical to download locally) and iterated through **HuggingFace Hub** as the primary checkpoint store. Kaggle and HuggingFace were effectively our version control for models and data; GitHub was used for final code submission only.
 
