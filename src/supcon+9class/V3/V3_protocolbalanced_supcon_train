@@ -1,0 +1,226 @@
+# ============================================================================
+# V3 — JOINT QUIC+TLS SupCon with CROSS-PROTOCOL BALANCED SAMPLER.
+# Identical to V1 (arch, loss, recipe) EXCEPT the batch sampler guarantees
+# each class appears with BOTH protocols every batch, and biases toward the
+# SAME SERVICE across protocols (youtube-QUIC + youtube-TLS together) ->
+# strong, consistent cross-protocol positives. SupCon loss unchanged.
+# Positives per anchor = ALL same-class (same-proto ∪ cross-proto), as before.
+# ============================================================================
+import json, os, numpy as np, torch, torch.nn as nn, torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from collections import defaultdict
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()
+from huggingface_hub import login
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+
+DEVICE="cuda" if torch.cuda.is_available() else "cpu"
+USE_HF=True
+HF_REPO="donbosoc/shigan-mjkan-baseline"
+JOINT_LOCAL=""     # unused when USE_HF=True
+OUTDIR=os.path.join(os.getenv("OUT_DIR","./checkpoints"),"v3"); Path(OUTDIR).mkdir(parents=True,exist_ok=True)
+import sys as _sys
+_lf=open(os.path.join(OUTDIR,"train.log"),"w",buffering=1)
+class _Tee:
+    def __init__(s,f):s.f=f;s.t=_sys.__stdout__
+    def write(s,m):s.t.write(m);s.f.write(m)
+    def flush(s):s.t.flush();s.f.flush()
+_sys.stdout=_Tee(_lf)
+
+BATCH, EPOCHS, LR, WARMUP, TAU, SEED = 512, 50, 1e-3, 2, 0.1, 0
+CLASSES_PER_BATCH = 8          # classes sampled per batch (<=9)
+torch.manual_seed(SEED); np.random.seed(SEED)
+
+# ---- load joint data ----
+def _path(sp):
+    if USE_HF:
+        from huggingface_hub import hf_hub_download
+        return hf_hub_download(HF_REPO, f"protocol_invariance/data/joint_{sp}.npz")
+    return f"{JOINT_LOCAL}/joint_{sp}.npz"
+def _meta():
+    if USE_HF:
+        from huggingface_hub import hf_hub_download
+        return json.load(open(hf_hub_download(HF_REPO,"protocol_invariance/data/joint_meta.json")))
+    return json.load(open(f"{JOINT_LOCAL}/joint_meta.json"))
+
+meta=_meta(); CATS=meta["categories"]; NC=meta["num_classes"]
+print(f"[joint] {NC} classes | {CATS}")
+
+class DS(Dataset):
+    def __init__(s,sp):
+        d=np.load(_path(sp),allow_pickle=True)
+        s.seq=d["seq"]; s.ctx=d["ctx"]; s.y=d["label"].astype(int)
+        s.proto=d["protocol"].astype(str); s.tag=d["tag"].astype(str)
+    def __len__(s): return len(s.y)
+tr=DS("train"); te=DS("test")
+
+# ============================================================================
+# CROSS-PROTOCOL BALANCED BATCH SAMPLER
+# Each batch: pick CLASSES_PER_BATCH classes. For each class, draw an equal
+# split of QUIC and TLS flows; within each protocol, bias toward services that
+# exist in BOTH protocols so the SAME service appears cross-protocol.
+# ============================================================================
+class CrossProtocolSampler:
+    def __init__(s, ds, batch=512, classes_per_batch=8, seed=0):
+        s.rng=np.random.default_rng(seed)
+        s.batch=batch; s.cpb=classes_per_batch
+        s.per_class=batch//classes_per_batch          # flows per class per batch
+        s.half=s.per_class//2                          # per protocol
+        # index pools: class -> protocol -> tag -> [indices]
+        s.pool=defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        for i,(y,p,t) in enumerate(zip(ds.y,ds.proto,ds.tag)):
+            s.pool[int(y)][p][t].append(i)
+        s.classes=sorted(s.pool.keys())
+        # which classes have BOTH protocols (eligible for cross-protocol pairs)
+        s.both={c for c in s.classes if "quic" in s.pool[c] and "tls" in s.pool[c]}
+        # shared services per class (same tag in both protocols)
+        s.shared_tags={}
+        for c in s.both:
+            qt=set(s.pool[c]["quic"]); tt=set(s.pool[c]["tls"])
+            s.shared_tags[c]=sorted(qt & tt)
+        s.n_batches=len(ds.y)//batch
+        print(f"[sampler] {s.n_batches} batches/epoch | classes w/ both protos: {sorted(s.both)}")
+        print(f"[sampler] shared services per class: "
+              + ", ".join(f"{CATS[c]}:{len(s.shared_tags[c])}" for c in sorted(s.both)))
+
+    def _draw_proto(s, c, proto, n):
+        """Draw n indices from class c, protocol proto, biasing shared services."""
+        if proto not in s.pool[c]: return []
+        out=[]
+        shared=s.shared_tags.get(c,[])
+        # half from shared services (enables same-service cross-proto positives), half any
+        n_sh=n//2 if shared else 0
+        if n_sh:
+            for _ in range(n_sh):
+                tg=shared[s.rng.integers(len(shared))]
+                lst=s.pool[c][proto][tg]
+                out.append(lst[s.rng.integers(len(lst))])
+        # remainder from any service in this protocol
+        alltags=list(s.pool[c][proto].keys())
+        while len(out)<n:
+            tg=alltags[s.rng.integers(len(alltags))]
+            lst=s.pool[c][proto][tg]
+            out.append(lst[s.rng.integers(len(lst))])
+        return out
+
+    def __iter__(s):
+        for _ in range(s.n_batches):
+            idx=[]
+            # prefer classes with both protocols; fill remaining with any
+            chosen=list(s.rng.choice(sorted(s.both), min(s.cpb,len(s.both)), replace=False))
+            if len(chosen)<s.cpb:
+                rest=[c for c in s.classes if c not in chosen]
+                chosen+=list(s.rng.choice(rest, s.cpb-len(chosen), replace=False))
+            for c in chosen:
+                if c in s.both:
+                    idx+=s._draw_proto(c,"quic",s.half)
+                    idx+=s._draw_proto(c,"tls", s.per_class-s.half)
+                else:   # single-protocol class (ecommerce=quic only)
+                    p="quic" if "quic" in s.pool[c] else "tls"
+                    idx+=s._draw_proto(c,p,s.per_class)
+            s.rng.shuffle(idx)
+            yield idx
+    def __len__(s): return s.n_batches
+
+def collate(idx, ds):
+    seq=torch.from_numpy(ds.seq[idx]).float()
+    y=torch.tensor(ds.y[idx]).long()
+    return seq,y
+
+# ---- model (verbatim, identical to V1) ----
+class SSMBlock(nn.Module):
+    def __init__(s,dm,ds=16,e=2):
+        super().__init__();s.di=e*dm;s.ds=ds
+        s.in_proj=nn.Linear(dm,2*s.di);s.conv=nn.Conv1d(s.di,s.di,3,padding=2,groups=s.di)
+        s.x_proj=nn.Linear(s.di,2*ds+1)
+        s.A_log=nn.Parameter(torch.log(torch.arange(1,ds+1,dtype=torch.float32).repeat(s.di,1)))
+        s.D=nn.Parameter(torch.ones(s.di));s.out_proj=nn.Linear(s.di,dm)
+    def forward(s,x,mask):
+        B,L,_=x.shape;xb,z=s.in_proj(x).chunk(2,-1)
+        xc=F.silu(s.conv(xb.transpose(1,2))[...,:L].transpose(1,2))
+        Bm,Cm,dt=torch.split(s.x_proj(xc),[s.ds,s.ds,1],-1);dt=F.softplus(dt);A=-torch.exp(s.A_log)
+        a=torch.exp(dt.unsqueeze(-1)*A.unsqueeze(0).unsqueeze(0));bx=(dt*Bm).unsqueeze(2)*xc.unsqueeze(-1)
+        mm=mask.view(B,L,1,1);a=a*mm+(1-mm);bx=bx*mm
+        h=torch.zeros(B,s.di,s.ds,device=x.device);ys=[]
+        for t in range(L):h=a[:,t]*h+bx[:,t];ys.append((h*Cm[:,t].unsqueeze(1)).sum(-1))
+        return s.out_proj((torch.stack(ys,1)+s.D*xc)*F.silu(z))
+class Encoder(nn.Module):
+    def __init__(s,nf=5,dm=128,nl=2,ds=16,dp=0.1):
+        super().__init__();s.embed=nn.Linear(nf,dm)
+        s.blocks=nn.ModuleList([SSMBlock(dm,ds) for _ in range(nl)])
+        s.norms=nn.ModuleList([nn.LayerNorm(dm) for _ in range(nl)])
+        s.drop=nn.Dropout(dp);s.onorm=nn.LayerNorm(dm)
+    def forward(s,seq):
+        mask=(seq.abs().sum(-1)>0).float();x=s.embed(seq)
+        for b,n in zip(s.blocks,s.norms):x=x+s.drop(b(n(x),mask))
+        x=s.onorm(x);mm=mask.unsqueeze(-1);return (x*mm).sum(1)/mm.sum(1).clamp(min=1.0)
+class SupConModel(nn.Module):
+    def __init__(s,nf=5,dm=128,nl=2,ds=16,dp=0.1):
+        super().__init__();s.encoder=Encoder(nf,dm,nl,ds,dp)
+        s.proj=nn.Sequential(nn.Linear(dm,dm),nn.BatchNorm1d(dm),nn.ReLU(),nn.Linear(dm,dm))
+    def forward(s,seq): h=s.encoder(seq); z=F.normalize(s.proj(h),dim=1); return h,z
+
+def supcon_loss(z,y,tau=TAU):
+    z=F.normalize(z,dim=1); sim=z@z.T/tau
+    sim=sim-sim.max(1,keepdim=True).values.detach()
+    y=y.view(-1,1); pos=(y==y.T).float(); pos.fill_diagonal_(0)
+    lm=torch.ones_like(pos); lm.fill_diagonal_(0)
+    exp=torch.exp(sim)*lm
+    logp=sim-torch.log(exp.sum(1,keepdim=True)+1e-9)
+    mpp=(pos*logp).sum(1)/pos.sum(1).clamp(min=1)
+    return -mpp.mean()
+
+model=SupConModel(meta["n_seq_feats"],128,2,16,0.1).to(DEVICE)
+opt=torch.optim.AdamW(model.parameters(),lr=LR,weight_decay=1e-4)
+def lr_at(ep): return LR*(ep+1)/WARMUP if ep<WARMUP else LR
+
+sampler=CrossProtocolSampler(tr,BATCH,CLASSES_PER_BATCH,SEED)
+
+@torch.no_grad()
+def embed_arr(seqarr,bs=512):
+    model.eval(); Z=[]
+    for i in range(0,len(seqarr),bs):
+        xb=torch.from_numpy(seqarr[i:i+bs]).float().to(DEVICE)
+        Z.append(model(xb)[1].cpu().numpy())
+    return np.concatenate(Z)
+def knn(ref_z,ref_y,qz,k=20):
+    preds=[]
+    for i in range(0,len(qz),2048):
+        sims=qz[i:i+2048]@ref_z.T
+        idx=np.argpartition(-sims,k,1)[:,:k]
+        preds.append(np.array([np.bincount(ref_y[v],minlength=NC).argmax() for v in idx]))
+    return np.concatenate(preds)
+def protocol_eval(tag=""):
+    ztr=embed_arr(tr.seq); zte=embed_arr(te.seq)
+    rng=np.random.default_rng(0)
+    ri=np.concatenate([rng.choice(np.where(tr.y==c)[0],min(2000,(tr.y==c).sum()),replace=False) for c in range(NC)])
+    pred=knn(ztr[ri],tr.y[ri],zte)
+    q=te.proto=="quic"; t=te.proto=="tls"
+    print(f"  [{tag}] overall={(pred==te.y).mean():.3f} | QUIC={(pred[q]==te.y[q]).mean():.3f} | TLS={(pred[t]==te.y[t]).mean():.3f} <<<")
+    for c in range(NC):
+        m=t&(te.y==c)
+        if m.sum(): print(f"      {CATS[c]:18s} {(pred[m]==c).mean():.3f}")
+    return (pred==te.y).mean(),(pred[t]==te.y[t]).mean()
+
+# ---- train ----
+best=0
+for ep in range(EPOCHS):
+    model.train()
+    for g in opt.param_groups: g["lr"]=lr_at(ep)
+    tot=0; nb=0
+    for idx in sampler:
+        seq,y=collate(idx,tr); seq,y=seq.to(DEVICE),y.to(DEVICE)
+        _,z=model(seq); loss=supcon_loss(z,y)
+        opt.zero_grad(); loss.backward(); opt.step(); tot+=loss.item(); nb+=1
+    if (ep+1)%5==0 or ep==EPOCHS-1:
+        ov,tls=protocol_eval(f"ep{ep+1}")
+        print(f"[ep{ep+1}] loss={tot/nb:.4f} overall={ov:.3f} TLS={tls:.3f}")
+        if tls>best:
+            best=tls; torch.save({"model":model.state_dict(),"meta":meta,"epoch":ep+1,
+                "tls_acc":tls,"overall":ov},f"{OUTDIR}/v3_best.pt")
+            print(f"   ** saved (best TLS={tls:.3f})")
+    else:
+        print(f"[ep{ep+1}] loss={tot/nb:.4f}")
+print(f"\nV3 DONE. Best TLS={best:.3f}  (V1 was ~0.72, QUIC-only baseline 0.197)")
