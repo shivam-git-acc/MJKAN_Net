@@ -201,7 +201,6 @@ All used as standard dependencies via their public APIs; none modified.
 - **Learned protocol invariance** — the joint QUIC+TLS contrastive scheme lifting TLS transfer from ≈0.20 (QUIC-only) to 0.72+ and 90.6% on the flagship, ablated via the V-ladder — including the honest negative result that adversarial protocol-erasure (DANN) is redundant over joint training.
 - **Behavior-distinctive generalization characterization** — the finding (and published, reproducible 19-app benchmark) that unseen-app generalization is governed by behavioral distinctiveness, with a mechanistic explanation for every success/failure, plus threshold-free novelty detection (AUROC 0.832).
 - **The cross-pipeline coupling finding** — that CESNET-exporter-specific features cannot be reconstructed from raw captures.
-- **The window-only real-time variant** and the reproducible evaluation harness (`evaluate_all.py`).
 
 ---
 
