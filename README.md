@@ -7,13 +7,12 @@
 - **Institute/College Name** - International Institute of Information Technology, Hyderabad (IIIT-H), Gachibowli, Hyderabad, Telangana 500032
 - **Final Presentation Google Drive Link** - [*Shigan_Presentation_google_drive_link*](https://docs.google.com/presentation/d/17VHvtFiIctDbH00ND8AxoF0mPb5plmlLhv0zAB1gxUs/edit?usp=drive_link)
 - **Full Submission Demo Video Link** - [*Shigan_DemoVideo_google_drive_link*](https://drive.google.com/file/d/1BiAzm1kAqIcKYmg-fnpjQUBzp6qLC0JP/view?usp=drive_link)
-- **Setup & Result Reproducibility Video Link** - *(link to be added)*
+- **Setup & Result Reproducibility Video Link** - [*Shigan_SetupandReproducibilityVideo_google_drive_link*](https://drive.google.com/file/d/1CTqGVeMhJGJvXiDAmIWublYoo5UiO35S/view?usp=sharing)
 
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
-python run.py list                              # show all 18 models (no token needed)
 python run.py mjkan_temporal eval --from-hf    # flagship — QUIC 91.1%, TLS 90.6%
 python run.py realtime eval --from-hf          # real-time variant
 python run.py baseline eval --from-hf          # 9-class behavioral baseline
