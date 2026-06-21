@@ -46,6 +46,7 @@ Each model section in [architecture.md](architecture.md) includes the exact `eva
 ### Reproduce published KPIs (eval from HuggingFace)
 
 ```bash
+python run.py mjkan_temporal eval --from-hf 
 python run.py baseline eval --from-hf
 python run.py mjkan eval --from-hf
 python run.py v7 eval --from-hf

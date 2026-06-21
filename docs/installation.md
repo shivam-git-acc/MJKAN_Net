@@ -44,10 +44,4 @@ Several training scripts log metrics to W&B. To enable, set `WANDB_API_KEY` in y
 
 To reproduce the training datasets from raw CESNET data, the scripts are designed to run on **Kaggle** where the ~90 GB datasets are already available as mounted inputs — no local download needed. See the [Dataset Collection](user_guide.md#dataset-collection-reproducibility) section of the user guide for Kaggle links and instructions.
 
-## Verify Installation
 
-```bash
-python run.py list
-```
-
-This prints all 18 available model variants with descriptions, confirming the CLI and config files are set up correctly.
