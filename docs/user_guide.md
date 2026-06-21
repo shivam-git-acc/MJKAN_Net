@@ -4,7 +4,6 @@
 
 ```
 python run.py <model> <mode> [--push-hf] [--from-hf]
-python run.py list
 ```
 
 | Argument | Description |
