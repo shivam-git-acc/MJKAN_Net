@@ -1,0 +1,153 @@
+# ============================================================================
+# SHIGAN / MJKAN-Net — EMBEDDING ANALYSIS (KPI-1 diagnostics)
+# 1) t-SNE plot of embedding space (class separation, visual)
+# 2) inter-class cosine similarity matrix (all class pairs)
+# 3) intra-class cosine similarity (within-class tightness)
+# KPI goal: intra > 0.7, inter < 0.3
+# Analyzes the 6-class baseline (pulled from HF). Saves plots locally, pushes to HF if MJKAN_PUSH_HF=1.
+# ============================================================================
+import json, os
+from pathlib import Path
+import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from dotenv import load_dotenv
+load_dotenv()
+from huggingface_hub import hf_hub_download, HfApi, login
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+
+# ----------------------------- CONFIG ---------------------------
+HF_REPO       = "donbosoc/shigan-mjkan-baseline"
+HF_DATA       = "baseline6classdata"
+CKPT_NAME     = "baseline_best.pt"
+PER_CLASS_PLOT = 400
+PER_CLASS_SIM  = 1000
+K_TSNE_PERP    = 30
+OUT           = os.path.join(os.getenv("OUT_DIR","./checkpoints"),"baseline_nosupcon_analysis")
+DEVICE        = "cuda" if torch.cuda.is_available() else "cpu"
+# ----------------------------------------------------------------
+Path(OUT).mkdir(parents=True, exist_ok=True)
+
+# ---- load model + meta from HF ----
+ck = torch.load(hf_hub_download(HF_REPO, CKPT_NAME), map_location=DEVICE, weights_only=False)
+meta = ck["meta"]; CATS = meta["categories"]; NC = meta["num_classes"]
+
+class SSMBlock(nn.Module):
+    def __init__(s,dm,ds=16,e=2):
+        super().__init__();s.di=e*dm;s.ds=ds
+        s.in_proj=nn.Linear(dm,2*s.di);s.conv=nn.Conv1d(s.di,s.di,3,padding=2,groups=s.di)
+        s.x_proj=nn.Linear(s.di,2*ds+1)
+        s.A_log=nn.Parameter(torch.log(torch.arange(1,ds+1,dtype=torch.float32).repeat(s.di,1)))
+        s.D=nn.Parameter(torch.ones(s.di));s.out_proj=nn.Linear(s.di,dm)
+    def forward(s,x,mask):
+        B,L,_=x.shape;xb,z=s.in_proj(x).chunk(2,-1)
+        xc=F.silu(s.conv(xb.transpose(1,2))[...,:L].transpose(1,2))
+        Bm,Cm,dt=torch.split(s.x_proj(xc),[s.ds,s.ds,1],-1);dt=F.softplus(dt);A=-torch.exp(s.A_log)
+        a=torch.exp(dt.unsqueeze(-1)*A.unsqueeze(0).unsqueeze(0));bx=(dt*Bm).unsqueeze(2)*xc.unsqueeze(-1)
+        mm=mask.view(B,L,1,1);a=a*mm+(1-mm);bx=bx*mm
+        h=torch.zeros(B,s.di,s.ds,device=x.device);ys=[]
+        for t in range(L):h=a[:,t]*h+bx[:,t];ys.append((h*Cm[:,t].unsqueeze(1)).sum(-1))
+        return s.out_proj((torch.stack(ys,1)+s.D*xc)*F.silu(z))
+class Baseline(nn.Module):
+    def __init__(s,nc,nf=5,dm=128,nl=2,ds=16,dp=0.1):
+        super().__init__();s.embed=nn.Linear(nf,dm)
+        s.blocks=nn.ModuleList([SSMBlock(dm,ds) for _ in range(nl)])
+        s.norms=nn.ModuleList([nn.LayerNorm(dm) for _ in range(nl)])
+        s.drop=nn.Dropout(dp);s.onorm=nn.LayerNorm(dm)
+        s.head=nn.Sequential(nn.Linear(dm,dm),nn.GELU(),nn.Dropout(dp),nn.Linear(dm,nc))
+    def forward(s,seq,ctx=None):
+        mask=(seq.abs().sum(-1)>0).float();x=s.embed(seq)
+        for b,n in zip(s.blocks,s.norms):x=x+s.drop(b(n(x),mask))
+        x=s.onorm(x);mm=mask.unsqueeze(-1);emb=(x*mm).sum(1)/mm.sum(1).clamp(min=1.0)
+        return s.head(emb),emb
+
+model=Baseline(NC).to(DEVICE); model.load_state_dict(ck["model"]); model.eval()
+
+# ---- embed test set ----
+d=np.load(hf_hub_download(HF_REPO,f"{HF_DATA}/pool_test.npz"),allow_pickle=True)
+seq=d["seq"].astype(np.float32); y=d["label"]
+norm=meta["norm"]; seq_mean=np.array(norm["seq_mean"],np.float32); seq_std=np.array(norm["seq_std"],np.float32)
+_mask=np.any(seq!=0,axis=2,keepdims=True).astype(np.float32); seq=(seq-seq_mean)/seq_std*_mask
+rng=np.random.default_rng(0)
+@torch.no_grad()
+def embed(arr):
+    out=[]
+    for i in range(0,len(arr),1024):
+        xb=torch.from_numpy(arr[i:i+1024]).float().to(DEVICE)
+        out.append(F.normalize(model(xb)[1],dim=1).cpu().numpy())  # L2-normalized
+    return np.concatenate(out)
+
+# sample per class for similarity stats
+sim_idx=np.concatenate([rng.choice(np.where(y==c)[0],
+          min(PER_CLASS_SIM,(y==c).sum()),replace=False) for c in range(NC)])
+E=embed(seq[sim_idx]); Lb=y[sim_idx]
+
+# ---- (2) inter-class cosine matrix (class-mean embeddings) ----
+means=np.stack([E[Lb==c].mean(0) for c in range(NC)])
+means=means/ (np.linalg.norm(means,axis=1,keepdims=True)+1e-9)
+inter_M = means @ means.T          # [NC,NC], diag~self
+
+# ---- (3) intra-class cosine (mean pairwise within class) ----
+def intra(c):
+    e=E[Lb==c]
+    idx=rng.choice(len(e),min(300,len(e)),replace=False); e=e[idx]
+    s=e@e.T; iu=np.triu_indices(len(e),1); return float(s[iu].mean())
+intra_vals={CATS[c]:round(intra(c),3) for c in range(NC)}
+mean_intra=round(float(np.mean(list(intra_vals.values()))),3)
+offdiag=inter_M[~np.eye(NC,dtype=bool)]
+mean_inter=round(float(offdiag.mean()),3)
+
+print("=== KPI-1 EMBEDDING SIMILARITY ===")
+print("intra-class (within) cosine:", intra_vals)
+print(f"MEAN intra-class = {mean_intra}  (KPI goal > 0.7)")
+print(f"MEAN inter-class = {mean_inter}  (KPI goal < 0.3)")
+print("\ninter-class cosine matrix:")
+print("           "+" ".join(f"{c[:6]:>7}" for c in CATS))
+for i,c in enumerate(CATS):
+    print(f"{c[:10]:<11}"+" ".join(f"{inter_M[i,j]:7.3f}" for j in range(NC)))
+
+# ---- plot 1: cosine matrix heatmap ----
+fig1,ax=plt.subplots(figsize=(7,6))
+im=ax.imshow(inter_M,cmap="viridis",vmin=-0.2,vmax=1.0)
+ax.set_xticks(range(NC)); ax.set_yticks(range(NC))
+ax.set_xticklabels(CATS,rotation=45,ha="right"); ax.set_yticklabels(CATS)
+for i in range(NC):
+    for j in range(NC):
+        ax.text(j,i,f"{inter_M[i,j]:.2f}",ha="center",va="center",
+                color="white" if inter_M[i,j]<0.6 else "black",fontsize=8)
+ax.set_title(f"Inter-class cosine (baseline)\nmean intra={mean_intra} | mean inter={mean_inter}")
+fig1.colorbar(im); fig1.tight_layout()
+p_mat=Path(OUT,"cosine_matrix.png"); fig1.savefig(p_mat,dpi=130); plt.close(fig1)
+
+# ---- plot 2: t-SNE ----
+plot_idx=np.concatenate([rng.choice(np.where(y==c)[0],
+           min(PER_CLASS_PLOT,(y==c).sum()),replace=False) for c in range(NC)])
+Ep=embed(seq[plot_idx]); Lp=y[plot_idx]
+print("\n[t-SNE] computing on",len(Ep),"points...")
+T=TSNE(n_components=2,init="pca",perplexity=K_TSNE_PERP,max_iter=1000,random_state=0).fit_transform(Ep)
+fig2,ax=plt.subplots(figsize=(8,7))
+cmap=plt.cm.tab10
+for c in range(NC):
+    m=Lp==c; ax.scatter(T[m,0],T[m,1],s=6,alpha=0.6,color=cmap(c),label=CATS[c])
+ax.legend(markerscale=2,fontsize=9); ax.set_title("Embedding space t-SNE (baseline, 6-class)")
+ax.set_xticks([]); ax.set_yticks([]); fig2.tight_layout()
+p_tsne=Path(OUT,"tsne_embeddings.png"); fig2.savefig(p_tsne,dpi=130); plt.close(fig2)
+
+# ---- save metrics json ----
+metrics=dict(mean_intra_cosine=mean_intra,mean_inter_cosine=mean_inter,
+             intra_per_class=intra_vals,
+             inter_matrix={CATS[i]:{CATS[j]:round(float(inter_M[i,j]),3) for j in range(NC)} for i in range(NC)},
+             kpi_intra_target=0.7,kpi_inter_target=0.3,
+             kpi_intra_met=bool(mean_intra>0.7),kpi_inter_met=bool(mean_inter<0.3))
+p_json=Path(OUT,"embedding_metrics.json"); p_json.write_text(json.dumps(metrics,indent=2))
+print("\nsaved:",p_mat.name,p_tsne.name,p_json.name)
+
+# ---- push plots to HF ----
+if os.getenv("MJKAN_PUSH_HF") == "1":
+    api=HfApi()
+    for f in (p_mat,p_tsne,p_json):
+        api.upload_file(path_or_fileobj=str(f),path_in_repo=f"analysis/{f.name}",repo_id=HF_REPO)
+    print(f"[hf] pushed analysis/ to https://huggingface.co/{HF_REPO}")

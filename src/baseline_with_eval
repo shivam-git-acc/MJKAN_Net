@@ -1,0 +1,156 @@
+# ============================================================================
+# SHIGAN / MJKAN-Net — BASELINE TRAINING (6-class, no SupCon)
+# Pure-PyTorch SSM encoder + linear head. ctx[6] ignored (FiLM comes at rung 1).
+# ============================================================================
+import json, time, os, sys as _sys
+from pathlib import Path
+import numpy as np
+import torch, torch.nn as nn, torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from dotenv import load_dotenv
+load_dotenv()
+from huggingface_hub import hf_hub_download, HfApi, login
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+
+# ----------------------------- CONFIG ---------------------------
+HF_REPO    = "donbosoc/shigan-mjkan-baseline"
+HF_DATA    = "baseline6classdata"
+OUT        = os.path.join(os.getenv("OUT_DIR","./checkpoints"),"baseline_nosupcon")
+EPOCHS     = 30
+BATCH      = 512
+LR         = 3e-4
+WD         = 1e-4
+D_MODEL    = 128
+N_LAYERS   = 2
+D_STATE    = 16
+DROPOUT    = 0.1
+SEED       = 0
+DEVICE     = "cuda" if torch.cuda.is_available() else "cpu"
+# ----------------------------------------------------------------
+Path(OUT).mkdir(parents=True, exist_ok=True)
+
+_lf = open(os.path.join(OUT,"train.log"),"w",buffering=1)
+class _Tee:
+    def __init__(s,f): s.f=f; s.t=_sys.__stdout__
+    def write(s,m): s.t.write(m); s.f.write(m)
+    def flush(s): s.t.flush(); s.f.flush()
+_sys.stdout = _Tee(_lf)
+
+torch.manual_seed(SEED); np.random.seed(SEED)
+print("[device]", DEVICE)
+
+# ---- download data from HF ----
+print("[data] downloading from HF...")
+_paths = {sp: hf_hub_download(HF_REPO, f"{HF_DATA}/pool_{sp}.npz") for sp in ("train","val","test")}
+meta = json.load(open(hf_hub_download(HF_REPO, f"{HF_DATA}/pool_meta.json")))
+NC = meta["num_classes"]; CATS = meta["categories"]
+print("[meta]", NC, "classes:", CATS)
+
+class FlowDS(Dataset):
+    def __init__(self, split):
+        d = np.load(_paths[split])
+        self.seq = torch.from_numpy(d["seq"]).float()
+        self.ctx = torch.from_numpy(d["ctx"]).float()
+        self.y   = torch.from_numpy(d["label"]).long()
+    def __len__(self): return len(self.y)
+    def __getitem__(self, i): return self.seq[i], self.ctx[i], self.y[i]
+
+loaders = {sp: DataLoader(FlowDS(sp), batch_size=BATCH, shuffle=(sp=="train"),
+           num_workers=2, pin_memory=(DEVICE=="cuda"))
+           for sp in ("train","val","test")}
+
+# ---- model: pure-PyTorch selective SSM ----
+class SSMBlock(nn.Module):
+    def __init__(self, d_model, d_state=16, expand=2):
+        super().__init__()
+        self.di = expand*d_model; self.ds = d_state
+        self.in_proj = nn.Linear(d_model, 2*self.di)
+        self.conv = nn.Conv1d(self.di, self.di, 3, padding=2, groups=self.di)
+        self.x_proj = nn.Linear(self.di, 2*d_state+1)
+        self.A_log = nn.Parameter(torch.log(torch.arange(1, d_state+1, dtype=torch.float32).repeat(self.di,1)))
+        self.D = nn.Parameter(torch.ones(self.di))
+        self.out_proj = nn.Linear(self.di, d_model)
+    def forward(self, x, mask):
+        B,L,_ = x.shape
+        xb, z = self.in_proj(x).chunk(2, -1)
+        xc = F.silu(self.conv(xb.transpose(1,2))[...,:L].transpose(1,2))
+        Bm, Cm, dt = torch.split(self.x_proj(xc), [self.ds, self.ds, 1], -1)
+        dt = F.softplus(dt); A = -torch.exp(self.A_log)
+        a = torch.exp(dt.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0))
+        bx = (dt*Bm).unsqueeze(2) * xc.unsqueeze(-1)
+        m = mask.view(B,L,1,1); a = a*m + (1-m); bx = bx*m
+        h = torch.zeros(B, self.di, self.ds, device=x.device, dtype=x.dtype); ys=[]
+        for t in range(L):
+            h = a[:,t]*h + bx[:,t]; ys.append((h*Cm[:,t].unsqueeze(1)).sum(-1))
+        y = torch.stack(ys,1) + self.D*xc
+        return self.out_proj(y * F.silu(z))
+
+class Baseline(nn.Module):
+    def __init__(self, nc, nf=5, dm=128, nl=2, ds=16, dp=0.1):
+        super().__init__()
+        self.embed = nn.Linear(nf, dm)
+        self.blocks = nn.ModuleList([SSMBlock(dm, ds) for _ in range(nl)])
+        self.norms = nn.ModuleList([nn.LayerNorm(dm) for _ in range(nl)])
+        self.drop = nn.Dropout(dp); self.onorm = nn.LayerNorm(dm)
+        self.head = nn.Sequential(nn.Linear(dm,dm), nn.GELU(), nn.Dropout(dp), nn.Linear(dm,nc))
+    def forward(self, seq, ctx=None):
+        mask = (seq.abs().sum(-1) > 0).float()
+        x = self.embed(seq)
+        for blk,nrm in zip(self.blocks,self.norms): x = x + self.drop(blk(nrm(x), mask))
+        x = self.onorm(x); m = mask.unsqueeze(-1)
+        emb = (x*m).sum(1) / m.sum(1).clamp(min=1.0)
+        return self.head(emb), emb
+
+model = Baseline(NC, meta["n_seq_feats"], D_MODEL, N_LAYERS, D_STATE, DROPOUT).to(DEVICE)
+print("[model] params", sum(p.numel() for p in model.parameters()))
+
+# class-weighted CE
+ytr = loaders["train"].dataset.y.numpy()
+cnt = np.bincount(ytr, minlength=NC).astype(float)
+w = torch.tensor(cnt.sum()/(NC*np.maximum(cnt,1)), dtype=torch.float32, device=DEVICE)
+crit = nn.CrossEntropyLoss(weight=w)
+opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
+sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS)
+
+@torch.no_grad()
+def evaluate(loader):
+    model.eval(); cor=tot=0; pc=np.zeros(NC); pt=np.zeros(NC)
+    for seq,ctx,y in loader:
+        seq,y = seq.to(DEVICE), y.to(DEVICE)
+        pred = model(seq)[0].argmax(1)
+        cor += (pred==y).sum().item(); tot += y.numel()
+        for c in range(NC):
+            mk=(y==c); pt[c]+=mk.sum().item(); pc[c]+=(pred[mk]==c).sum().item()
+    bal = np.mean([pc[c]/pt[c] for c in range(NC) if pt[c]>0])
+    return cor/max(tot,1), float(bal), (pc/np.maximum(pt,1))
+
+best=-1
+for ep in range(1, EPOCHS+1):
+    model.train(); t0=time.time(); tl=0; nb=0
+    for seq,ctx,y in loaders["train"]:
+        seq,y = seq.to(DEVICE), y.to(DEVICE)
+        loss = crit(model(seq)[0], y)
+        opt.zero_grad(); loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(),1.0); opt.step()
+        tl+=loss.item(); nb+=1
+    sched.step()
+    va,vb,_ = evaluate(loaders["val"])
+    print(f"[ep {ep:03d}] loss={tl/nb:.4f} val_acc={va:.4f} val_bal={vb:.4f} ({time.time()-t0:.0f}s)")
+    if va>best:
+        best=va
+        torch.save({"model":model.state_dict(),"meta":meta}, Path(OUT,"baseline_best.pt"))
+
+model.load_state_dict(torch.load(Path(OUT,"baseline_best.pt"),weights_only=False)["model"])
+ta,tb,per = evaluate(loaders["test"])
+print(f"\n[RESULT] best_val={best:.4f} test_acc={ta:.4f} test_bal={tb:.4f}")
+print("[per-class test acc]", {CATS[i]: round(float(per[i]),3) for i in range(NC)})
+Path(OUT,"baseline_metrics.json").write_text(json.dumps(
+    {"test_acc":ta,"test_bal_acc":tb,"per_class":{CATS[i]:float(per[i]) for i in range(NC)}}, indent=2))
+
+if os.getenv("MJKAN_PUSH_HF") == "1":
+    api = HfApi()
+    for fname in ("baseline_best.pt","baseline_metrics.json"):
+        api.upload_file(path_or_fileobj=str(Path(OUT,fname)),
+                        path_in_repo=fname, repo_id=HF_REPO)
+        print(f"[hf] pushed {fname}")
