@@ -8,6 +8,7 @@ from pathlib import Path
 DEVICE="cuda" if torch.cuda.is_available() else "cpu"
 HF="donbosoc/shigan-mjkan-baseline"
 OUT=os.path.join(os.getenv("OUT_DIR","./checkpoints"),"mjkan_temporal")
+Path(OUT).mkdir(parents=True, exist_ok=True)
 CLASSES=["audio_streaming","cdn_web_assets","ecommerce","file_transfer","gaming",
          "messaging","search_info_news","social_media","video_streaming"]
 NC=len(CLASSES)
@@ -132,3 +133,63 @@ for c in range(NC):
     at=(pt[t_y[t_te]==c]==c).mean() if (t_y[t_te]==c).sum() else float('nan')
     print(f"    {CLASSES[c]:18s}: "+(f"{aq:.3f}" if not np.isnan(aq) else "  -  ")+" / "+(f"{at:.3f}" if not np.isnan(at) else "  -  "))
 print(f"\n  [matches training-time numbers? saved: {ck.get('acc_quic'):.3f}/{ck.get('acc_tls'):.3f}]")
+
+# ---- save results ----
+per_class = {}
+for c in range(NC):
+    aq=(pq[q_y[q_te]==c]==c).mean() if (q_y[q_te]==c).sum() else None
+    at=(pt[t_y[t_te]==c]==c).mean() if (t_y[t_te]==c).sum() else None
+    per_class[CLASSES[c]] = {"quic": float(aq) if aq is not None else None,
+                              "tls":  float(at) if at is not None else None}
+result = {
+    "model": "mjkan_temporal",
+    "acc_quic": float(acc_q), "acc_tls": float(acc_t),
+    "intra_cosine": float(intra), "inter_cosine": float(inter),
+    "latency_ms_median": float(np.median(ts)),
+    "per_class": per_class,
+}
+out_json = Path(OUT, "mjkan_temporal_eval.json")
+out_json.write_text(json.dumps(result, indent=2))
+print(f"\n[saved] {out_json}")
+
+# ---- t-SNE plot (cosine metric on balanced sample; caption computed on same sample) ----
+try:
+    import matplotlib; matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from sklearn.manifold import TSNE
+    COLORS = ["#E59500","#B5654A","#7A8C5E","#A0763E","#C75D4A",
+              "#5B7B8A","#8A6FA0","#C98AA0","#2B6E6A"]
+    PERCLASS = 600
+    rng2 = np.random.default_rng(0)
+    keep = np.concatenate([rng2.choice(np.where(ally==c)[0], min(PERCLASS,(ally==c).sum()), replace=False)
+                           for c in range(NC) if (ally==c).sum()>0])
+    Zs, ys = allz[keep], ally[keep]
+    print(f"t-SNE on {len(Zs)} points ({PERCLASS}/class target)...")
+    emb2d = TSNE(n_components=2, metric="cosine", init="pca",
+                 perplexity=30, learning_rate="auto", random_state=0).fit_transform(Zs)
+    # compute intra/inter on the SAME sample so caption matches the plot
+    present = [c for c in range(NC) if (ys==c).sum()>0]
+    C = np.stack([Zs[ys==c].mean(0) for c in present]); C /= np.linalg.norm(C, axis=1, keepdims=True)
+    intra_s = np.mean([(Zs[ys==c]@C[i]).mean() for i,c in enumerate(present)])
+    inter_s = (C@C.T)[np.triu_indices(len(present),1)].mean()
+    plt.figure(figsize=(10,8), dpi=150)
+    plt.gca().set_facecolor("#FBF7F2"); plt.gcf().patch.set_facecolor("#FBF7F2")
+    for i, c in enumerate(present):
+        m = ys==c
+        plt.scatter(emb2d[m,0], emb2d[m,1], s=10, alpha=0.7,
+                    color=COLORS[c], label=CLASSES[c].replace("_"," "), edgecolors="none")
+    plt.title("MJKAN Temporal — flagship embedding space (z), temporal test set",
+              fontsize=13, color="#2B2118", pad=12)
+    plt.figtext(0.5, 0.012,
+                f"intra-class cosine {intra_s:.3f}   ·   inter-class cosine {inter_s:+.3f}   ·   {len(Zs)} flows",
+                ha="center", fontsize=10, color="#7A6A5C")
+    plt.xticks([]); plt.yticks([])
+    for sp in plt.gca().spines.values(): sp.set_visible(False)
+    plt.legend(loc="center left", bbox_to_anchor=(1.0,0.5), frameon=False, fontsize=9, markerscale=1.6)
+    plt.tight_layout(rect=[0,0.03,1,1])
+    out_tsne = str(Path(OUT, "tsne_embeddings.png"))
+    plt.savefig(out_tsne, bbox_inches="tight", facecolor="#FBF7F2")
+    plt.close()
+    print(f"[saved] {out_tsne}")
+except Exception as e:
+    print(f"[tsne skipped: {e}]")
