@@ -1,0 +1,136 @@
+# ============================================================================
+# FINE-TUNE V7 + gentle app-DANN (stable). Loads novel_apps.npz FROM HF.
+# ============================================================================
+import os, json, numpy as np, torch, torch.nn as nn, torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.autograd import Function
+from huggingface_hub import hf_hub_download, login
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+DEVICE="cuda" if torch.cuda.is_available() else "cpu"
+HF="donbosoc/shigan-mjkan-baseline"
+OUT=os.path.join(os.getenv("OUT_DIR","./checkpoints"),"v7_dann"); Path(OUT).mkdir(parents=True,exist_ok=True)
+EPOCHS,LR,TAU,BATCH=12,2e-4,0.1,512
+LAMBDA_MAX,GAMMA=0.1,8.0
+
+meta=json.load(open(hf_hub_download(HF,"protocol_invariance/data/joint_meta.json")))
+CATS=meta["categories"]; NC=meta["num_classes"]; N_CTX=meta["n_ctx_feats"]
+dtr=np.load(hf_hub_download(HF,"protocol_invariance/data/joint_train.npz"),allow_pickle=True)
+dte=np.load(hf_hub_download(HF,"protocol_invariance/data/joint_test.npz"),allow_pickle=True)
+tr_seq,tr_ctx,tr_y=dtr["seq"],dtr["ctx"],dtr["label"].astype(int)
+tr_tag=dtr["tag"].astype(str); te_seq,te_ctx,te_y=dte["seq"],dte["ctx"],dte["label"].astype(int)
+te_p=dte["protocol"].astype(str)
+uapps={a:i for i,a in enumerate(sorted(set(tr_tag)))}; N_APPS=len(uapps)
+tr_app=np.array([uapps[a] for a in tr_tag])
+
+class GRL(Function):
+    @staticmethod
+    def forward(ctx,x,lam): ctx.lam=lam; return x.view_as(x)
+    @staticmethod
+    def backward(ctx,g): return g.neg()*ctx.lam, None
+def grl(x,lam): return GRL.apply(x,lam)
+class SSMBlock(nn.Module):
+    def __init__(s,dm,ds=16,e=2):
+        super().__init__();s.di=e*dm;s.ds=ds
+        s.in_proj=nn.Linear(dm,2*s.di);s.conv=nn.Conv1d(s.di,s.di,3,padding=2,groups=s.di)
+        s.x_proj=nn.Linear(s.di,2*ds+1)
+        s.A_log=nn.Parameter(torch.log(torch.arange(1,ds+1,dtype=torch.float32).repeat(s.di,1)))
+        s.D=nn.Parameter(torch.ones(s.di));s.out_proj=nn.Linear(s.di,dm)
+    def forward(s,x,mask):
+        B,L,_=x.shape;xb,z=s.in_proj(x).chunk(2,-1)
+        xc=F.silu(s.conv(xb.transpose(1,2))[...,:L].transpose(1,2))
+        Bm,Cm,dt=torch.split(s.x_proj(xc),[s.ds,s.ds,1],-1);dt=F.softplus(dt);A=-torch.exp(s.A_log)
+        a=torch.exp(dt.unsqueeze(-1)*A.unsqueeze(0).unsqueeze(0));bx=(dt*Bm).unsqueeze(2)*xc.unsqueeze(-1)
+        mm=mask.view(B,L,1,1);a=a*mm+(1-mm);bx=bx*mm
+        h=torch.zeros(B,s.di,s.ds,device=x.device);ys=[]
+        for tt in range(L):h=a[:,tt]*h+bx[:,tt];ys.append((h*Cm[:,tt].unsqueeze(1)).sum(-1))
+        return s.out_proj((torch.stack(ys,1)+s.D*xc)*F.silu(z))
+class Encoder(nn.Module):
+    def __init__(s,nf=5,dm=128,nl=2,ds=16,dp=0.1):
+        super().__init__();s.embed=nn.Linear(nf,dm)
+        s.blocks=nn.ModuleList([SSMBlock(dm,ds) for _ in range(nl)])
+        s.norms=nn.ModuleList([nn.LayerNorm(dm) for _ in range(nl)]);s.drop=nn.Dropout(dp);s.onorm=nn.LayerNorm(dm)
+    def forward(s,seq):
+        mk=(seq.abs().sum(-1)>0).float();x=s.embed(seq)
+        for b,n in zip(s.blocks,s.norms):x=x+s.drop(b(n(x),mk))
+        x=s.onorm(x);mm=mk.unsqueeze(-1);return (x*mm).sum(1)/mm.sum(1).clamp(min=1.0)
+class FiLM(nn.Module):
+    def __init__(s,n,dm,h=64):super().__init__();s.net=nn.Sequential(nn.Linear(n,h),nn.ReLU(),nn.Linear(h,2*dm));s.dm=dm
+    def forward(s,h,c):g=s.net(c);return (1+g[:,:s.dm])*h+g[:,s.dm:]
+class FiLMModel(nn.Module):
+    def __init__(s,nf=5,nc=6,dm=128):
+        super().__init__();s.encoder=Encoder(nf,dm);s.film=FiLM(nc,dm)
+        s.proj=nn.Sequential(nn.Linear(dm,dm),nn.BatchNorm1d(dm),nn.ReLU(),nn.Linear(dm,dm))
+    def forward(s,x,c):h=s.film(s.encoder(x),c);return h,F.normalize(s.proj(h),dim=1)
+
+ck=torch.load(hf_hub_download(HF,"protocol_invariance/v7_sep/supcon_v7_best.pt"),map_location=DEVICE,weights_only=False)
+model=FiLMModel(meta["n_seq_feats"],N_CTX).to(DEVICE); model.load_state_dict(ck["model"])
+app_disc=nn.Sequential(nn.Linear(128,128),nn.ReLU(),nn.Linear(128,N_APPS)).to(DEVICE)
+
+def supcon(z,y,tau=TAU):
+    sim=z@z.T/tau; sim=sim-sim.max(1,keepdim=True).values.detach()
+    y=y.view(-1,1); pos=(y==y.T).float(); pos.fill_diagonal_(0)
+    lm=torch.ones_like(pos); lm.fill_diagonal_(0)
+    exp=torch.exp(sim)*lm; logp=sim-torch.log(exp.sum(1,keepdim=True)+1e-9)
+    return -((pos*logp).sum(1)/pos.sum(1).clamp(min=1)).mean()
+
+class DS(Dataset):
+    def __len__(s): return len(tr_y)
+    def __getitem__(s,i): return (torch.from_numpy(tr_seq[i]).float(),torch.from_numpy(tr_ctx[i]).float(),int(tr_y[i]),int(tr_app[i]))
+cnt=np.bincount(tr_y,minlength=NC); cw=(cnt.sum()/(NC*np.clip(cnt,1,None))).astype(np.float32)
+sampler=WeightedRandomSampler(torch.from_numpy(cw[tr_y]).double(),len(tr_y),True)
+dl=DataLoader(DS(),batch_size=BATCH,sampler=sampler,num_workers=2,drop_last=True,pin_memory=True)
+opt=torch.optim.AdamW(list(model.parameters())+list(app_disc.parameters()),lr=LR,weight_decay=1e-4)
+
+print(f"{'='*55}\nFINE-TUNE V7 + gentle app-DANN ({EPOCHS}ep, λmax={LAMBDA_MAX})\n{'='*55}")
+total=EPOCHS*len(dl); step=0
+for ep in range(EPOCHS):
+    model.train();ts=ta=0;nb=0;dc=0;dn=0
+    for seq,ctx,yb,appb in dl:
+        seq,ctx,yb,appb=[x.to(DEVICE,non_blocking=True) for x in (seq,ctx,yb,appb)]
+        p=step/total; lam=LAMBDA_MAX*(2/(1+np.exp(-GAMMA*p))-1)
+        _,z=model(seq,ctx)
+        ls=supcon(z,yb); la=F.cross_entropy(app_disc(grl(z,lam)),appb)
+        loss=ls+la
+        if torch.isnan(loss): step+=1; continue
+        opt.zero_grad();loss.backward()
+        torch.nn.utils.clip_grad_norm_(list(model.parameters())+list(app_disc.parameters()),5.0)
+        opt.step();ts+=ls.item();ta+=la.item();nb+=1;step+=1
+        dc+=(app_disc(z.detach()).argmax(1)==appb).sum().item();dn+=len(appb)
+    print(f"  ep{ep+1}: supcon={ts/nb:.3f} app_loss={ta/nb:.3f} app_disc_acc={dc/dn:.3f} λ={lam:.3f}")
+
+@torch.no_grad()
+def embed(sq,cx,bs=1024):
+    model.eval();Z=[]
+    for i in range(0,len(sq),bs): Z.append(model(torch.from_numpy(sq[i:i+bs]).float().to(DEVICE),torch.from_numpy(cx[i:i+bs]).float().to(DEVICE))[1].cpu().numpy())
+    return np.concatenate(Z)
+def knn(rz,ry,qz,k=20):
+    out=[]
+    for i in range(0,len(qz),2048):
+        s=qz[i:i+2048]@rz.T;idx=np.argpartition(-s,k,1)[:,:k]
+        out.append(np.array([np.bincount(ry[v],minlength=NC).argmax() for v in idx]))
+    return np.concatenate(out)
+ztr=embed(tr_seq,tr_ctx); zte=embed(te_seq,te_ctx)
+rng=np.random.default_rng(0); ri=np.concatenate([rng.choice(np.where(tr_y==c)[0],min(4000,(tr_y==c).sum()),replace=False) for c in range(NC)])
+pred=knn(ztr[ri],tr_y[ri],zte)
+qa=(pred[te_p=="quic"]==te_y[te_p=="quic"]).mean(); ta_=(pred[te_p=="tls"]==te_y[te_p=="tls"]).mean()
+print(f"\nIn-domain after app-DANN: QUIC={qa:.3f} TLS={ta_:.3f}")
+print(f"Final app_disc_acc: {dc/dn:.3f} (random={1/N_APPS:.3f}; low=app erased)")
+
+# ===== UNSEEN apps test — LOAD FROM HF =====
+nv=np.load(hf_hub_download(HF,"generalization/novel_apps.npz"),allow_pickle=True)
+zn=embed(nv["seq"],nv["ctx"]); apps=nv["app"]
+cents=np.stack([ztr[tr_y==c].mean(0) for c in range(NC)]); cents/=np.linalg.norm(cents,axis=1,keepdims=True)
+zn_n=zn/np.linalg.norm(zn,axis=1,keepdims=True)
+known_conf=(zte/np.linalg.norm(zte,axis=1,keepdims=True)@cents.T).max(1).mean()
+print(f"\nNovel-app placement after app-DANN (known conf ref={known_conf:.3f}):")
+for app in np.unique(apps):
+    m=apps==app; s=zn_n[m]@cents.T
+    print(f"  {app:22s} -> {CATS[s.mean(0).argmax()]:18s} (conf {s.max(1).mean():.2f})")
+novel_conf=(zn_n@cents.T).max(1).mean()
+print(f"\nKNOWN conf: {known_conf:.3f}  NOVEL conf: {novel_conf:.3f}  gap: {known_conf-novel_conf:+.3f}")
+torch.save({"model":model.state_dict()},f"{OUT}/v7_appdann.pt")
+print("[saved]")
