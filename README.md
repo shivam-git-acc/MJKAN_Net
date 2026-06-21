@@ -1,31 +1,109 @@
-# Your Project Name
+# MJKAN-Net: Protocol-Invariant Network Traffic Classification
 
-- **Problem Statement Number** - 
-- **Problem Statement Title** - *(Must exactly match one of the 11 Samsung EnnovateX AX Hackathon Problem Statements)*
-- **Team name** - *(Same as Phase 1 Team name)*
-- **Team members (Names)** - *Member 1 Name*, *Member 2 Name*
-- **Institute/College Name** - *Name*, *Campus Name & Address (In case the institute has multiple campuses)*
-- **Final Presentation Google Drive Link** - *Upload the PDF presentation for your final submission on Google Drive (It should be openly accessible and not behind any login wall)*
-- **Full Submission Demo Video Link** - *(Upload the Demo video on Youtube as a public or unlisted video and share the link. Google Drive uploads for video is not allowed.)*
-- **Setup & Result Reproducibility Video Link** - *(Upload the Demo video on Youtube as a public or unlisted video and share the link. Google Drive uploads for video is not allowed.)*
+- **Problem Statement Number** - AX-PS-02
+- **Problem Statement Title** - Network Traffic Classification using AI/ML
+- **Team name** - Shigan
+- **Team members (Names)** - Shivam Patel, Kavan Gandhi
+- **Institute/College Name** - International Institute of Information Technology, Hyderabad (IIIT-H), Gachibowli, Hyderabad, Telangana 500032
+- **Final Presentation Google Drive Link** - [*Shigan_Presentation_google_drive_link*](https://docs.google.com/presentation/d/17VHvtFiIctDbH00ND8AxoF0mPb5plmlLhv0zAB1gxUs/edit?usp=drive_link)
+- **Full Submission Demo Video Link** - [*Shigan_DemoVideo_google_drive_link*](https://drive.google.com/file/d/1BiAzm1kAqIcKYmg-fnpjQUBzp6qLC0JP/view?usp=drive_link)
+- **Setup & Result Reproducibility Video Link** - *(link to be added)*
+
+## Quick Start
+
+```bash
+pip install -r requirements.txt
+python run.py list                              # show all 18 models (no token needed)
+python run.py mjkan_temporal eval --from-hf    # flagship — QUIC 91.1%, TLS 90.6%
+python run.py realtime eval --from-hf          # real-time variant
+python run.py baseline eval --from-hf          # 9-class behavioral baseline
+# unseen-app generalization eval (AUROC 0.832):
+python3 src/supcon+9class/MJKAN_variants/temporal_robust/unseen_handling/novel_arg.py
+```
+
+See [docs/installation.md](docs/installation.md) and [docs/user_guide.md](docs/user_guide.md) for full details.
+
+## Development Timeline & GitHub Push Note
+
+> **Why does this repo have a single GitHub push?**
+
+All development was done on **Kaggle notebooks** (the CESNET datasets are ~90 GB — not practical to download locally) and iterated through **HuggingFace Hub** as the primary checkpoint store. Kaggle and HuggingFace were effectively our version control for models and data; GitHub was used for final code submission only.
+
+The authoritative development timeline is the **HuggingFace commit history** at [donbosoc/shigan-mjkan-baseline](https://huggingface.co/donbosoc/shigan-mjkan-baseline/commits/main), which shows timestamped pushes of each model checkpoint and dataset artifact spanning the full ~3-week development period (from early V1/baseline runs through to the MJKAN Temporal flagship).
+
+Training screenshots with Kaggle notebook outputs are in [docs/screenshots/](docs/screenshots/) — one per model. These show the actual training runs from the Kaggle environment, not post-hoc reconstructions.
+
+| Evidence | Location |
+|----------|----------|
+| Checkpoint commit history (timestamped) | [HuggingFace commit log](https://huggingface.co/donbosoc/shigan-mjkan-baseline/commits/main) |
+| Training run outputs (Kaggle screenshots) | [docs/screenshots/](docs/screenshots/) |
 
 ### Project Artefacts
 
 - **Technical Documentation** - Create a **docs** folder and add all technical details in markdown files inside this folder explaining the project Technical Stack, List of OSS libraries/projects used along with their links, the technical architecture of your solution, implementation details, installation instructions, user guide, salient features of the projects. Kindly add screenshots wherever possible.
 - **[Important]** Create a file `docs/ax.md` whiere you explain in detail how you utilizes open weight models and/or agentic development tools to implement your solution. Explain in detail your  Agentic AI setup , Agentic workflows, Reasoning & planning pipelines, Tool use / tool chaining, Coding assistants, agents, harness, MCP servers, agents.md, skills, Memory / context handling, Multi-agent orchestration systems, etc. Please highlight from your experience - what worked and **what did not work**.
 - **Source Code** - Create a **src** folder and add all developed project source codes (including training & benchmark evaluation codes) in the repo. The code must be capable of being successfully installed/executed and must run consistently on the intended platforms.
-- **Models Used** - *(Hugging Face links to all models used in the project. You are permitted to use only open weight models.)*
-- **Models Published** - *(In case you have developed a model as a part of your solution, kindly upload it on Hugging Face under appropriate open source license and add the link here.)*
-- **Datasets Used** - *(Links to all datasets used in the project. You are permitted to use publicly available datasets under licenses like Creative Commons, Open Data Commons, or equivalent.)*
-- **Datasets Published** - *(Links to all datasets created for the project and published on Hugging Face. You are allowed to publish any synthetic or proprietary dataset used in their project, but will be responsible for any legal compliance and permission for the same. The dataset can be published under Creative Commons, Open Data Commons, or equivalent license.)*
+- **Models Used** - No pre-trained open-weight models used; all models trained from scratch using open-source PyTorch components
+- **Models Published** - https://huggingface.co/donbosoc/shigan-mjkan-baseline (18 model variants across 6 experiment groups; 13 checkpoints published)
+- **Datasets Used** - [CESNET-QUIC22](https://data.cesnet.cz/research/datasets/cesnet-quic22) (CC BY 4.0), [CESNET-TLS-Year22](https://data.cesnet.cz/research/datasets/cesnet-tls-year22) (CC BY 4.0)
+- **Datasets Published** - https://huggingface.co/donbosoc/shigan-mjkan-baseline (preprocessed NPZ files: behavioral 9-class, 6-class, protocol-invariance joint set, temporal splits, real-time splits)
 
 #### Final Presentation
 
-Unlike Phase 1 presentation, in Phase 2 you can freely decide the template, flow and content of your technical presentation. Ensure you cover all aspects of your solution - innovation, novelty, architecture, open datasets/models developed and used, final deliverable details, KPIs of your solution, AI/Agent use, any other details. 
+[*Shigan_Presentation_google_drive_link*](https://docs.google.com/presentation/d/17VHvtFiIctDbH00ND8AxoF0mPb5plmlLhv0zAB1gxUs/edit?usp=drive_link) 
 
 #### Full Submission Demo Video
 
-Create a high quality video demonstration your solution in real life and showcasing how it is actually solves the proposed AX Hackathon problem.
+
+The repository includes an interactive visualization dashboard (`demo_viewer.html`) and a corresponding `data.json` file generated by the Kaggle inference notebook.
+
+#### Important
+
+Do **not** open the HTML file by double-clicking it in your file explorer, as modern browsers may block local file access required by the visualization.
+
+Ensure that:
+
+* `demo_viewer.html` and `data.json` are located in the **same folder**.
+* The Kaggle notebook has been executed and has generated the required `data.json` file.
+
+#### Hosting the Visualization Locally
+
+Open a terminal/command prompt in the directory containing both files and run:
+
+```bash
+python3 -m http.server 8000
+```
+
+Then open the following URL in your browser:
+
+```text
+http://localhost:8000/demo_viewer.html
+```
+
+The visualization dashboard will load and automatically read the generated `data.json` file from the same directory.
+
+#### Demo Workflow
+
+1. Run the provided Kaggle notebook to generate `data.json`.
+2. Download both:
+
+   * `demo_viewer.html`
+   * `data.json`
+3. Place them in the same folder.
+4. Start a local HTTP server:
+
+```bash
+python3 -m http.server 8000
+```
+
+5. Open:
+
+```text
+http://localhost:8000/demo_viewer.html
+```
+
+6. Explore the generated traffic-classification results through the interactive visualization interface.
+
 
 #### Setup & Result Reproducibility Video
 
@@ -37,4 +115,99 @@ To ensure reproducibility of results and to verify the presented KPIs, we requir
 
 ### Attribution 
 
-In case this project is built on top of an existing open source project, please provide the original project link here. Also, mention what new features were developed. Failing to attribute the source projects may lead to disqualification during the time of evaluation.
+## Summary
+
+MJKAN-Net is an **original implementation**. The model — its SSM encoder, Gated FiLM conditioning module, Tiny FasterKAN reasoning head, Supervised Contrastive training, the protocol-invariance training scheme, and the full evaluation/benchmark pipeline — was written from scratch in **pure PyTorch**. We did **not** fork or build on top of an existing traffic-classification codebase; there is no upstream repository that this project extends.
+
+Several components are **implementations of published ideas**, credited below. We distinguish two cases honestly:
+
+1. **Concepts/papers we implemented ourselves** — we wrote the code, guided by the published method. Intellectual influences, not code dependencies.
+2. **Open-source libraries we used as tools** — standard general-purpose libraries used as-is.
+
+We are not aware of any source code copied or adapted from another project's repository. Where a component follows a published method closely, the originating paper is cited.
+
+---
+
+## 1. Methods / Concepts We Implemented Ourselves
+
+The implementation of each component below is our own PyTorch code, written from the method described in the paper — **not** imported from or copied out of the authors' repositories.
+
+| Component | Originating work | What we implemented ourselves |
+|-----------|------------------|-------------------------------|
+| **SSM encoder** (`SSMBlock`) | Mamba: *Linear-Time Sequence Modeling with Selective State Spaces*, Gu & Dao, 2023 — https://arxiv.org/abs/2312.00752 | A pure-PyTorch selective state-space block (selective scan, input-dependent Δ/B/C, conv input projection). We deliberately did **not** use the CUDA `mamba-ssm` package, so the model runs on any GPU/CPU. |
+| **Gated FiLM** (`GatedFiLM`) | FiLM: *Feature-wise Linear Modulation*, Perez et al., AAAI 2018 — https://arxiv.org/abs/1709.07871 | Standard FiLM is a trivial scale/shift. Our **gated** variant (a learned gate blending modulated/unmodulated features) is our own extension to prevent degenerate conditioning. |
+| **Tiny FasterKAN reasoning head** (`RSWAF`, `FasterKANLayer`) | Kolmogorov–Arnold Networks (KAN), Liu et al., 2024 — https://arxiv.org/abs/2404.19756; FasterKAN / RSWAF activation, Delis 2024 — https://github.com/AthanasiosDelis/faster-kan | The RSWAF formula (`1 − tanh²((x − grid) · inv)`) and the layer design (spline projection + base linear projection over grid-expanded features) follow the FasterKAN concept. Our implementation is written from scratch in compact PyTorch adapted to a 2-layer residual reasoning head; no code was copied from the FasterKAN repository. |
+| **Supervised Contrastive loss** (`SupCon`) | *Supervised Contrastive Learning*, Khosla et al., NeurIPS 2020 — https://arxiv.org/abs/2004.11362 | Our own SupCon implementation (in-batch positives by label, temperature τ, numerically-stable log-sum-exp shift). |
+| **DANN / Gradient Reversal Layer** (`GRL`, `DomainHead`) | *Domain-Adversarial Training of Neural Networks*, Ganin et al., JMLR 2016 — https://arxiv.org/abs/1505.07818 | `GRL` is a custom `torch.autograd.Function` that negates gradients by −λ during backpropagation, following the GRL formulation of Ganin et al. The sigmoid λ schedule (`2/(1+e^{-γp}) − 1) · λ_max`) is also from that paper. The domain discriminator head and the GRL attachment point (z-space in V5z, app space in V7+DANN) are our own design. |
+| **Transformer encoder ablation** (`TransformerEnc`, `PosEnc`) | *Attention Is All You Need*, Vaswani et al., NeurIPS 2017 — https://arxiv.org/abs/1706.03762 | Used PyTorch's built-in `nn.TransformerEncoderLayer` (self-attention + FFN). Sinusoidal positional encoding (`PosEnc`) follows the exact formula from §3.5 of Vaswani et al. Written from scratch using PyTorch primitives; no external transformer library used. |
+| **RFC-3550 jitter feature** | RFC 3550 (RTP), §A.8 interarrival jitter estimator — https://www.rfc-editor.org/rfc/rfc3550 | Per-packet smoothed jitter (`jitter_rfc3550`) computed during dataset collection using the RFC's iterative estimator. Also recomputed under perturbation in V-COND's timing augmentation to maintain consistency. |
+
+---
+
+## 2. Models Compared Against (Not Used in Our Code)
+
+Referenced in our presentation/docs as **positioning comparisons only**. No code from them is in this project.
+
+| Work | Why referenced |
+|------|----------------|
+| **ET-BERT** (Lin et al., WWW 2022) | Transformer-based encrypted-traffic classifier — the quadratic-cost baseline our linear-time SSM contrasts with. |
+| **NetMamba** (2024) | A Mamba-based **byte-stride** model (reads packet bytes). Cited to clarify a **domain difference**: MJKAN-Net is payload-free and protocol-invariant by construction, so the two are not directly comparable on the same numbers. No NetMamba code is used. |
+| **PacketCLIP / multi-modal traffic models** | The "conditions-as-static-noise" comparison point. |
+
+---
+
+## 3. Datasets Used
+
+| Dataset | Source | License |
+|---------|--------|---------|
+| **CESNET-QUIC22** | https://data.cesnet.cz/datasets/cesnet-quic22 · Zenodo: https://zenodo.org/records/10728760 · Kaggle mirror: https://www.kaggle.com/datasets/anishanandhan/cesnet | **CC BY 4.0** |
+| **CESNET-TLS-Year22** | https://data.cesnet.cz/datasets/cesnet-tls22 · https://www.nature.com/articles/s41597-024-03927-4 · Kaggle mirror: https://www.kaggle.com/datasets/pranjalkar99/cesnet-22 | **CC BY 4.0** |
+| **CESNET HTTPS** (cross-protocol transfer test) | Kaggle: https://www.kaggle.com/datasets/inhngcn/https-traffic-classification · CESNET source: https://github.com/CESNET/cesnet-datazoo · https://zenodo.org/records/4911551 | **CC BY 4.0** |
+| **5G Traffic Dataset** (cross-distribution test — see note) | Kaggle: https://www.kaggle.com/datasets/kimdaegyeom/5g-traffic-datasets | Per Kaggle dataset terms |
+
+Both CESNET datasets are released under the **Creative Commons Attribution 4.0 International (CC BY 4.0)** license. CC BY 4.0 permits use, redistribution, and the creation of derivative works (including models trained on the data and republished derived artifacts) for any purpose, **including commercial use, provided attribution is given.** It imposes no share-alike and no non-commercial restriction, so releasing our model under MIT/Apache-2.0 is fully compatible.
+
+**Required attribution (CC BY 4.0):** we cite the original data articles, as requested by the dataset authors:
+
+> Luxemburk, J., Hynek, K., Čejka, T., Lukačovič, A., & Šiška, P. (2023). *CESNET-QUIC22: A large one-month QUIC network traffic dataset from backbone lines.* Data in Brief, 46, 108888. https://doi.org/10.1016/j.dib.2023.108888
+
+> Luxemburk, J., et al. (2024). *CESNET-TLS-Year22: A year-spanning TLS network traffic dataset from backbone lines.* Scientific Data, 11. https://doi.org/10.1038/s41597-024-03927-4
+
+Our derived artifacts (preprocessed NPZ, the unseen-app benchmark) are republished under CC BY 4.0 with the same attribution, consistent with the source license.
+
+**Note on the 5G Traffic Dataset.** We attempted a cross-distribution test on externally-captured 5G traffic. It did **not** yield a valid result: the external feature-extraction pipeline did not match our CESNET-derived feature definitions (CESNET-exporter-specific context features such as `truncation_ratio` could not be reconstructed and had zero variance), so the model received malformed context. We report this honestly as a **feature-pipeline-coupling limitation** (documented in architecture.md), not as a model result. The dataset is credited here because it was used in testing.
+
+---
+
+## 4. Open-Source Libraries (used as tools, unmodified)
+
+| Library | Role | License |
+|---------|------|---------|
+| PyTorch | Model implementation & training | BSD-3 |
+| NumPy | Numerical arrays, NPZ pipelines | BSD-3 |
+| scikit-learn | k-NN eval, AUROC, t-SNE | BSD-3 |
+| pandas | CESNET CSV/`.xz` ingestion | BSD-3 |
+| huggingface_hub | Model/data hosting & download | Apache-2.0 |
+| scapy | Raw-pcap parsing (cross-pipeline test) | GPL-2.0 |
+| Weights & Biases | Experiment tracking | MIT |
+| matplotlib | t-SNE plots, cosine heatmaps | PSF/BSD |
+
+All used as standard dependencies via their public APIs; none modified.
+
+---
+
+## 5. What Is Novel in This Project
+
+- **The MJKAN architecture** — the specific fusion of a pure-PyTorch SSM encoder, a *gated* FiLM module, and a tiny residual FasterKAN head, trained with SupCon and deployed on the projection output `z`. To our knowledge, original.
+- **Learned protocol invariance** — the joint QUIC+TLS contrastive scheme lifting TLS transfer from ≈0.20 (QUIC-only) to 0.72+ and 90.6% on the flagship, ablated via the V-ladder — including the honest negative result that adversarial protocol-erasure (DANN) is redundant over joint training.
+- **Behavior-distinctive generalization characterization** — the finding (and published, reproducible 19-app benchmark) that unseen-app generalization is governed by behavioral distinctiveness, with a mechanistic explanation for every success/failure, plus threshold-free novelty detection (AUROC 0.832).
+- **The cross-pipeline coupling finding** — that CESNET-exporter-specific features cannot be reconstructed from raw captures.
+- **The window-only real-time variant** and the reproducible evaluation harness (`evaluate_all.py`).
+
+---
+
+## License
+
+Source code is released under the **Apache License 2.0**. The published model (https://huggingface.co/donbosoc/shigan-mjkan-baseline) is released under the same license, set via the `license: apache-2.0` field in the model card.
+
+**Dataset-license compatibility (confirmed):** the CESNET datasets are **CC BY 4.0**, which permits training and releasing derived models under any license (including Apache-2.0) with attribution only — no commercial or share-alike restriction. The required CESNET citations are provided in §3 above. There is no licensing conflict in releasing MJKAN-Net under Apache-2.0.

@@ -1,0 +1,22 @@
+# secrets — never commit real tokens
+.env
+
+# generated outputs
+checkpoints/
+*.pt
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

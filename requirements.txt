@@ -1,0 +1,9 @@
+torch>=2.0.0
+numpy
+huggingface_hub
+python-dotenv
+pyyaml
+pandas
+scikit-learn
+wandb
+matplotlib
