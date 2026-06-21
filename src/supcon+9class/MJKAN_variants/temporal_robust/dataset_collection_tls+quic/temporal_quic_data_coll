@@ -1,0 +1,153 @@
+# ============================================================================
+# QUIC TEMPORAL EXTRACTION — week-tagged flows for temporal robustness.
+# Maps ALL QUIC CATEGORY values (primary + alternative names) → 9 behavioral
+# classes in a single pass. Saves quic_temporal.npz.
+#
+# Usage:
+#   CESNET_QUIC_DATA_DIR=/path/to/cesnet-quic22  python3 temporal_quic_data_coll
+#   CESNET_QUIC_DATA_DIR=...  MJKAN_PUSH_HF=1    python3 temporal_quic_data_coll
+#
+# CESNET-QUIC22: https://data.cesnet.cz/research/datasets/cesnet-quic22
+# ============================================================================
+import os, glob, ast
+from pathlib import Path
+from collections import defaultdict
+import numpy as np, pandas as pd
+from dotenv import load_dotenv
+load_dotenv()
+
+def _kaggle_secret(key):
+    try:
+        from kaggle_secrets import UserSecretsClient
+        return UserSecretsClient().get_secret(key) or ""
+    except Exception:
+        return ""
+
+if not os.environ.get("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = _kaggle_secret("HF_TOKEN")
+from huggingface_hub import HfApi, login
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+
+# ----------------------------- CONFIG ---------------------------------------
+# Defaults are the Kaggle-mounted paths; override with env vars for local runs.
+BASE      = os.getenv("CESNET_QUIC_DATA_DIR", "/kaggle/input/datasets/anishanandhan/cesnet/cesnet-quic22")
+OUT       = os.path.join(os.getenv("DATA_DIR", "/kaggle/working"), "combined_temporal")
+HF_REPO   = os.getenv("HF_DATASET_REPO", "") or _kaggle_secret("HF_DATASET_REPO")
+HF_FOLDER = "combined_temporal"
+PER_CAT_PER_FILE = 1500
+# ----------------------------------------------------------------------------
+Path(OUT).mkdir(parents=True, exist_ok=True)
+
+CLASSES = ["audio_streaming","cdn_web_assets","ecommerce","file_transfer","gaming",
+           "messaging","search_info_news","social_media","video_streaming"]
+cls2idx = {c:i for i,c in enumerate(CLASSES)}
+
+CDN_APPS = {"google-gstatic","google-fonts","jsdelivr","cloudflare-cdnjs","google-usercontent",
+            "fontawesome","signal-cdn","overleaf-cdn","gstatic"}
+
+# Combined map — primary category names + alternative names found in some QUIC CSVs.
+# Both resolve to the same 9 behavioral classes so one pass captures everything.
+CAT_MAP = {
+    # primary names
+    "Streaming media":   "video_streaming",
+    "Music":             "audio_streaming",
+    "File transfer":     "file_transfer",
+    "Social media":      "social_media",
+    "Search engines":    "search_info_news",
+    "Instant messaging": "messaging",
+    "Games":             "gaming",
+    "E-commerce":        "ecommerce",
+    "Web":               "cdn_web_assets",
+    # alternative names present in some weekly CSVs
+    "File sharing":      "file_transfer",
+    "Social":            "social_media",
+    "Search":            "search_info_news",
+    "Blogs & News":      "search_info_news",
+}
+
+def parse_ppi(s):
+    try:
+        a = ast.literal_eval(s)
+        if len(a) < 3: return None
+        n = min(len(a[0]),len(a[1]),len(a[2]),30)
+        return (a[0][:n],a[1][:n],a[2][:n]) if n >= 3 else None
+    except: return None
+
+def build_seq(times, dirs, sizes):
+    n = len(times); seq = np.zeros((30,5), np.float32)
+    iat = [0.0] + [max(times[i]-times[i-1],0) for i in range(1,n)]
+    jt = [0.0]; J = 0.0
+    for i in range(1,n): D = abs(iat[i]-iat[i-1]); J = J+(D-J)/16.0; jt.append(J)
+    for i in range(n):
+        d  = 1 if dirs[i] > 0 else -1
+        dc = 0 if i == 0 else (1 if (dirs[i]>0) != (dirs[i-1]>0) else 0)
+        seq[i] = [sizes[i]*d, d, iat[i], jt[i], dc]
+    return seq, iat, n
+
+def build_ctx(row, iat, n):
+    dur  = max(float(row["DURATION"]), 1e-3)
+    pkts = float(row["PACKETS"] + row["PACKETS_REV"])
+    up   = float(row["BYTES"]); dn = float(row["BYTES_REV"])
+    ia   = np.array(iat[1:]) if n > 2 else np.array([0.0])
+    raw  = np.array([dur, pkts/dur,
+                     float(row["PPI_ROUNDTRIPS"]) / max(row["PPI_LEN"],1),
+                     up / max(up+dn,1),
+                     float(row["PPI_LEN"]) / max(pkts,1),
+                     ia.std() / (ia.mean()+1e-6)], np.float32)
+    raw[0] = np.log1p(raw[0]); raw[1] = np.log1p(raw[1])
+    return raw
+
+def week_of(path):
+    for part in path.split("/"):
+        if part.startswith("W-2022-"): return int(part.replace("W-2022-",""))
+    return -1
+
+flow_files = sorted(glob.glob(os.path.join(BASE,"**","flows-*.csv"), recursive=True))
+if not flow_files:
+    raise RuntimeError(
+        f"No CESNET QUIC CSV files found under CESNET_QUIC_DATA_DIR={BASE}\n"
+        f"Download from: https://data.cesnet.cz/research/datasets/cesnet-quic22"
+    )
+print(f"{len(flow_files)} QUIC files | weeks: {sorted(set(week_of(f) for f in flow_files))}")
+
+usecols = ["APP","CATEGORY","PPI","DURATION","BYTES","BYTES_REV","PACKETS","PACKETS_REV","PPI_ROUNDTRIPS","PPI_LEN"]
+wanted  = set(CAT_MAP.keys())
+SEQ=[]; CTX=[]; Y=[]; WEEK=[]; APP=[]
+
+for fi,f in enumerate(flow_files):
+    wk = week_of(f)
+    try: reader = pd.read_csv(f, usecols=usecols, chunksize=200000)
+    except Exception as e: print(f"  skip {f}: {e}"); continue
+    per_cat = defaultdict(int)
+    for chunk in reader:
+        sub = chunk[chunk["CATEGORY"].isin(wanted)]
+        for _,r in sub.iterrows():
+            cat = r["CATEGORY"]; app = str(r["APP"])
+            cls = "cdn_web_assets" if cat == "Streaming media" and app in CDN_APPS else CAT_MAP[cat]
+            if per_cat[(cls,wk)] >= PER_CAT_PER_FILE: continue
+            p = parse_ppi(r["PPI"])
+            if p is None: continue
+            seq, iat, n = build_seq(*p)
+            SEQ.append(seq); CTX.append(build_ctx(r,iat,n))
+            Y.append(cls2idx[cls]); WEEK.append(wk); APP.append(app)
+            per_cat[(cls,wk)] += 1
+    print(f"  [{fi+1}/{len(flow_files)}] week{wk} done, total={len(SEQ)}")
+
+SEQ=np.stack(SEQ); CTX=np.stack(CTX); Y=np.array(Y); WEEK=np.array(WEEK); APP=np.array(APP)
+print(f"\nQUIC temporal: {len(SEQ)} flows")
+print("per-class:", {CLASSES[c]:int((Y==c).sum()) for c in np.unique(Y)})
+print("per-week:",  {int(w):int((WEEK==w).sum()) for w in np.unique(WEEK)})
+
+fp = Path(OUT, "quic_temporal.npz")
+np.savez_compressed(str(fp), seq=SEQ, ctx=CTX, label=Y, week=WEEK, app=APP,
+                    protocol=np.array(["quic"]*len(SEQ)))
+print(f"[saved] {fp}")
+
+if os.getenv("MJKAN_PUSH_HF") == "1":
+    if not HF_REPO:
+        print("[hf] skipped — set HF_DATASET_REPO=yourname/your-repo to push")
+    else:
+        api = HfApi()
+        api.upload_file(path_or_fileobj=str(fp), path_in_repo=f"{HF_FOLDER}/{fp.name}", repo_id=HF_REPO)
+        print(f"[hf] pushed {HF_FOLDER}/{fp.name} -> {HF_REPO}")

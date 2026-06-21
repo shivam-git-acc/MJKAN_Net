@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MJKAN-Net — Live Demo</title>
+<style>
+  :root{
+    --paper:#FBF7F2; --ink:#241A12; --grey:#8A7866; --faint:#B6A491; --line:#E7DACB;
+    --amber:#E59500; --rust:#B5654A; --coral:#C75D4A; --sage:#6E8A4E; --ochre:#A0763E; --teal:#2B6E6A;
+    --card:#FFFFFF; --shadow:rgba(90,70,50,.13);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{font-family:'Inter','Segoe UI',Calibri,system-ui,sans-serif;
+        background:radial-gradient(120% 80% at 50% 0%, #FFFDF9 0%, var(--paper) 55%, #F3EADD 100%);
+        color:var(--ink);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+
+  header{display:flex;justify-content:space-between;align-items:center;padding:22px 46px 12px}
+  .brand{font-size:15px;letter-spacing:.4px}
+  .brand b{font-family:'Bookman Old Style',Georgia,serif;font-size:19px;color:var(--ink)}
+  .brand span{color:var(--rust)}
+  .progresswrap{display:flex;align-items:center;gap:14px}
+  .count{font-size:13px;color:var(--grey);font-variant-numeric:tabular-nums}
+  .pbar{width:200px;height:5px;background:var(--line);border-radius:3px;overflow:hidden}
+  .pbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--rust));width:0;transition:width .5s cubic-bezier(.4,0,.2,1)}
+
+  .stage{flex:1;display:grid;grid-template-columns:1.05fr 56px 1fr 56px .85fr;
+         align-items:center;padding:6px 46px 14px;overflow:hidden}
+  .col{height:100%;display:flex;flex-direction:column;justify-content:center;opacity:0;transform:translateY(26px)}
+  .col.in{animation:rise .6s cubic-bezier(.2,.7,.2,1) forwards}
+  .col.c1.in{animation-delay:.04s}.col.c2.in{animation-delay:.2s}.col.c3.in{animation-delay:.38s}
+  @keyframes rise{to{opacity:1;transform:translateY(0)}}
+  .eyebrow{font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--faint);font-weight:700;margin-bottom:10px}
+
+  .arrow{height:100%;display:flex;align-items:center;justify-content:center;color:var(--faint);opacity:0;animation:fadein .5s ease forwards}
+  .arrow.a1{animation-delay:.32s}.arrow.a2{animation-delay:.5s}
+  @keyframes fadein{to{opacity:1}}
+  .arrow svg{width:34px;height:34px}
+
+  .appHead{margin-bottom:4px}
+  .appName{font-size:34px;font-weight:700;line-height:1}
+  .protoTag{display:inline-block;font-size:11px;color:#fff;background:var(--ochre);padding:3px 11px;border-radius:20px;letter-spacing:.6px;vertical-align:middle;margin-left:10px}
+  .expected{font-size:13.5px;color:var(--grey);margin:8px 0 15px}
+  .expected b{color:var(--ink)}
+
+  .chartCard{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px var(--shadow);padding:16px 20px 12px}
+  .chartTitle{font-size:11.5px;color:var(--grey);margin-bottom:4px;line-height:1.4}
+  .chart{position:relative;height:226px;margin:8px 0 2px 44px}
+  .yaxis{position:absolute;left:-44px;top:0;bottom:22px;width:40px}
+  .ytick{position:absolute;right:6px;font-size:9.5px;color:var(--faint);transform:translateY(-50%);font-variant-numeric:tabular-nums}
+  .ylabel{position:absolute;left:-40px;top:50%;transform:rotate(-90deg);transform-origin:left center;font-size:10px;color:var(--grey);white-space:nowrap;margin-left:-46px}
+  .plot{position:absolute;left:0;right:0;top:0;bottom:22px;border-left:1.5px solid var(--line)}
+  .zero{position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}
+  .bars{position:absolute;inset:0;display:flex;align-items:stretch;gap:2px;padding:0 4px}
+  .barwrap{flex:1;min-width:3px;position:relative}
+  .bar{position:absolute;left:0;right:0;border-radius:2px;transition:height .55s cubic-bezier(.3,.8,.3,1),top .55s cubic-bezier(.3,.8,.3,1)}
+  .xlabel{position:absolute;left:50%;bottom:-1px;transform:translateX(-50%);font-size:10px;color:var(--grey)}
+  .legendrow{display:flex;gap:18px;align-items:center;margin-top:12px;font-size:11.5px;color:var(--grey);padding-left:44px}
+  .legendrow i{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .legendrow .meta{margin-left:auto;color:var(--faint)}
+
+  .modelChip{align-self:center;background:var(--ink);color:#fff;border-radius:14px;padding:12px 22px;text-align:center;margin-bottom:16px;box-shadow:0 8px 22px rgba(36,26,18,.3)}
+  .modelChip .m1{font-family:'Bookman Old Style',Georgia,serif;font-size:18px}
+  .modelChip .m2{font-size:10px;color:#D9C3AC;letter-spacing:1px;margin-top:3px}
+  .dist{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px var(--shadow);padding:15px 18px}
+  .distTitle{font-size:11.5px;color:var(--grey);margin-bottom:11px}
+  .drow{display:flex;align-items:center;gap:10px;margin-bottom:6.5px}
+  .dlab{width:96px;text-align:right;font-size:12px;color:var(--ink);white-space:nowrap}
+  .dtrack{flex:1;height:15px;background:#F1E8DC;border-radius:8px;overflow:hidden}
+  .dfill{height:100%;border-radius:8px;width:0;transition:width .7s cubic-bezier(.3,.8,.3,1)}
+  .dpct{width:36px;font-size:11px;color:var(--grey);font-variant-numeric:tabular-nums}
+  .drow.top .dlab{font-weight:700}
+
+  .verdictCard{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px var(--shadow);padding:22px 22px 24px}
+  .vtag{display:inline-block;color:#fff;font-weight:700;font-size:13.5px;padding:8px 18px;border-radius:24px;margin-bottom:18px;letter-spacing:.3px}
+  .vbig{font-size:13px;color:var(--grey);margin-bottom:4px}
+  .vbig b{font-family:'Bookman Old Style',Georgia,serif;font-size:20px}
+  .vacc{font-size:13px;color:var(--grey);margin-top:6px}
+  .vacc b{font-size:25px;font-family:'Bookman Old Style',Georgia,serif}
+  .gauge{margin-top:24px;border-top:1px solid var(--line);padding-top:18px}
+  .gcap{font-size:11px;color:var(--grey);margin-bottom:36px}
+  .gtrack{position:relative;height:6px;border-radius:3px;background:linear-gradient(90deg,#E9B9AE 0%,#EBD9C2 45%,#CBDBC0 100%);margin:0 10px}
+  .gmark{position:absolute;top:-8px;width:2px;height:22px;background:var(--sage)}
+  .gmark span{position:absolute;top:-19px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--sage);white-space:nowrap;font-weight:600}
+  .gdot{position:absolute;top:-9px;width:20px;height:20px;border-radius:50%;transform:translateX(-50%);box-shadow:0 2px 8px rgba(0,0,0,.2);transition:left .7s cubic-bezier(.3,.8,.3,1)}
+  .gdot span{position:absolute;top:26px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--ink);white-space:nowrap;font-weight:600}
+  .flag{margin-top:44px;font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
+
+  footer{display:flex;justify-content:center;align-items:center;gap:26px;padding:0 46px 22px}
+  button{font-family:inherit;font-size:14.5px;font-weight:600;border:none;border-radius:11px;padding:12px 26px;cursor:pointer;transition:transform .12s,box-shadow .25s,opacity .2s}
+  button:active{transform:translateY(1px)}
+  .prev{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .next{background:var(--ink);color:#fff;box-shadow:0 5px 16px rgba(36,26,18,.28)}
+  button:disabled{opacity:.3;cursor:default;box-shadow:none}
+  .dots{display:flex;gap:7px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--line);cursor:pointer;transition:background .25s,transform .25s}
+  .dot.on{background:var(--amber);transform:scale(1.35)}
+  .hint{position:fixed;bottom:13px;right:20px;font-size:11px;color:var(--faint)}
+  @media(max-width:1100px){.stage{grid-template-columns:1fr;overflow:auto}.arrow{display:none}}
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><b>MJKAN-Net</b> <span>·</span> classifying traffic it has never seen</div>
+    <div class="progresswrap"><div class="count" id="count">1 / 1</div><div class="pbar"><i id="pbar"></i></div></div>
+  </header>
+  <div class="stage" id="stage"></div>
+  <footer>
+    <button class="prev" id="prev">‹ Previous</button>
+    <div class="dots" id="dots"></div>
+    <button class="next" id="next">Next ›</button>
+  </footer>
+  <div class="hint">← →  arrow keys</div>
+<script>
+const CCOLORS=["#E59500","#B5654A","#6E8A4E","#A0763E","#C75D4A","#3E7C99","#8A6FA0","#C98AA0","#2B6E6A"];
+let DATA=null, idx=0, busy=false;
+
+async function load(){
+  try{ DATA=await (await fetch('demo_data.json')).json(); }catch(e){ DATA=SAMPLE; }
+  buildDots(); render();
+}
+function buildDots(){
+  document.getElementById('dots').innerHTML=DATA.apps.map((_,i)=>`<div class="dot ${i===idx?'on':''}" data-i="${i}"></div>`).join('');
+  document.querySelectorAll('.dot').forEach(d=>d.onclick=()=>go(+d.dataset.i));
+}
+function trafficChart(a){
+  const maxS=Math.max(...a.flow.map(p=>p.size),1);
+  const yMax=Math.max(200,Math.ceil(maxS/200)*200);
+  const ticks=[yMax,yMax/2,0,-yMax/2,-yMax];
+  const yticks=ticks.map(v=>{const top=(1-(v+yMax)/(2*yMax))*100;
+    return `<div class="ytick" style="top:${top}%">${v===0?'0':(v>0?'+':'−')+Math.abs(v)}</div>`;}).join('');
+  const bars=a.flow.map(p=>{
+    const h=Math.max(3,(p.size/yMax)*50);
+    const up=p.dir>=0;const col=up?'var(--amber)':'var(--rust)';
+    const st=up?`height:${h}%;top:${50-h}%;background:${col}`:`height:${h}%;top:50%;background:${col}`;
+    return `<div class="barwrap"><div class="bar" style="${st}"></div></div>`;
+  }).join('');
+  return `<div class="chartCard">
+    <div class="chartTitle">First ${a.flow.length} packets of one ${a.app} flow — behaviour only, payload never read</div>
+    <div class="chart">
+      <div class="yaxis">${yticks}</div><div class="ylabel">packet size (bytes)</div>
+      <div class="plot"><div class="zero"></div><div class="bars">${bars}</div></div>
+      <div class="xlabel">packet order  (time →)</div>
+    </div>
+    <div class="legendrow">
+      <span><i style="background:var(--amber)"></i>upstream</span>
+      <span><i style="background:var(--rust)"></i>downstream</span>
+      <span class="meta">${a.n} flows tested</span></div>
+  </div>`;
+}
+function distBlock(a){
+  const order=a.dist.map((_,i)=>i).sort((x,y)=>a.dist[y]-a.dist[x]);
+  const rows=order.map(i=>{const pct=Math.round(a.dist[i]*100);
+    return `<div class="drow ${i===a.top?'top':''}">
+      <div class="dlab">${DATA.classes[i]}</div>
+      <div class="dtrack"><div class="dfill" style="background:${CCOLORS[i]}" data-w="${pct}"></div></div>
+      <div class="dpct">${pct}%</div></div>`;}).join('');
+  return `<div class="modelChip"><div class="m1">MJKAN-Net</div><div class="m2">SSM · GATED FiLM · FasterKAN → z</div></div>
+    <div class="dist"><div class="distTitle">Cosine match to each known behaviour class</div>${rows}</div>`;
+}
+function verdictBlock(a){
+  const known=DATA.known_mean,success=a.success;
+  const vcol=success?'var(--sage)':'var(--coral)';
+  const vtxt=success?'GENERALISES ✓':'BEHAVIOURAL OVERLAP';
+  const gp=v=>(6+88*Math.max(0,Math.min(1,v))).toFixed(1);
+  const flagged=a.flagged;
+  const accLine=(a.acc!=null)?`<div class="vacc">lands in expected class &nbsp;<b style="color:${vcol}">${Math.round(a.acc*100)}%</b></div>`:'';
+  return `<div class="verdictCard">
+    <div class="vtag" style="background:${vcol}">${vtxt}</div>
+    <div class="vbig">classified as &nbsp;<b style="color:${CCOLORS[a.top]}">${a.top_class}</b></div>
+    ${accLine}
+    <div class="gauge"><div class="gcap">Novelty signal — confidence vs. known traffic</div>
+      <div class="gtrack">
+        <div class="gmark" style="left:${gp(known)}%"><span>known ${known.toFixed(2)}</span></div>
+        <div class="gdot" style="left:${gp(a.conf)}%;background:${flagged?'var(--coral)':'var(--amber)'}"><span>${a.app} ${a.conf.toFixed(2)}</span></div>
+      </div>
+      <div class="flag" style="color:${flagged?'var(--coral)':'var(--grey)'}">${flagged?'⚑&nbsp; flagged as novel':'within known range'}</div>
+    </div></div>`;
+}
+const ARR=c=>`<div class="arrow ${c}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
+function render(){
+  const a=DATA.apps[idx];
+  document.getElementById('stage').innerHTML=`
+    <div class="col c1">
+      <div class="appHead"><span class="appName">${a.app}</span><span class="protoTag">${(a.protocol||'').toUpperCase()}</span></div>
+      <div class="expected">expected by behaviour: <b>${a.expected}</b></div>
+      ${trafficChart(a)}</div>
+    ${ARR('a1')}
+    <div class="col c2">${distBlock(a)}</div>
+    ${ARR('a2')}
+    <div class="col c3"><div class="eyebrow">verdict</div>${verdictBlock(a)}</div>`;
+  requestAnimationFrame(()=>{
+    document.querySelectorAll('.col').forEach(c=>c.classList.add('in'));
+    setTimeout(()=>document.querySelectorAll('.dfill').forEach(f=>f.style.width=f.dataset.w+'%'),250);
+  });
+  document.getElementById('count').textContent=`${idx+1} / ${DATA.apps.length}`;
+  document.getElementById('pbar').style.width=((idx+1)/DATA.apps.length*100)+'%';
+  document.getElementById('prev').disabled=idx===0;
+  document.getElementById('next').disabled=idx===DATA.apps.length-1;
+  document.querySelectorAll('.dot').forEach((d,i)=>d.classList.toggle('on',i===idx));
+}
+function go(n){
+  if(busy||n===idx||n<0||n>=DATA.apps.length)return; busy=true;
+  const s=document.getElementById('stage');
+  s.style.transition='opacity .22s ease, transform .22s ease';
+  s.style.opacity='0'; s.style.transform='translateX(-16px)';
+  setTimeout(()=>{ idx=n; s.style.transition='none'; s.style.transform='translateX(16px)'; render();
+    requestAnimationFrame(()=>{ s.style.transition='opacity .34s ease, transform .34s ease';
+      s.style.opacity='1'; s.style.transform='translateX(0)'; setTimeout(()=>busy=false,340); });
+  },230);
+}
+document.getElementById('next').onclick=()=>go(idx+1);
+document.getElementById('prev').onclick=()=>go(idx-1);
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight')go(idx+1);if(e.key==='ArrowLeft')go(idx-1);});
+function rnd(n,big){return Array.from({length:n},(_,i)=>({size:60+Math.random()*(big||900),dir:(i%3===2||i%2===0)?1:-1,iat:Math.random()*.05}))}
+const SAMPLE={known_mean:0.75,
+ classes:["audio streaming","cdn web assets","ecommerce","file transfer","gaming","messaging","search info news","social media","video streaming"],
+ apps:[
+  {app:"bing",protocol:"tls",expected:"search info news",top:6,top_class:"search info news",acc:.998,conf:.25,n:800,success:true,flagged:true,flow:rnd(21,1100),dist:[0,.01,0,.01,0,0,.97,.01,0]},
+  {app:"apple-itunes",protocol:"tls",expected:"audio streaming",top:0,top_class:"audio streaming",acc:.964,conf:.27,n:800,success:true,flagged:true,flow:rnd(26,800),dist:[.96,.01,0,.01,0,0,.01,.01,0]},
+  {app:"ctu-matrix",protocol:"tls",expected:"messaging",top:5,top_class:"messaging",acc:.969,conf:.70,n:800,success:true,flagged:false,flow:rnd(18,400),dist:[0,0,0,.02,0,.97,0,.01,0]},
+  {app:"steam",protocol:"tls",expected:"gaming",top:1,top_class:"cdn web assets",acc:.025,conf:.72,n:800,success:false,flagged:true,flow:rnd(24,1300),dist:[0,.88,0,.05,.03,0,.02,.01,.01]},
+  {app:"microsoft-onedrive",protocol:"tls",expected:"file transfer",top:6,top_class:"search info news",acc:.001,conf:.19,n:800,success:false,flagged:true,flow:rnd(22,700),dist:[0,.05,0,0,0,0,.92,.02,.01]},
+ ]};
+load();
+</script>
+</body>
+</html>

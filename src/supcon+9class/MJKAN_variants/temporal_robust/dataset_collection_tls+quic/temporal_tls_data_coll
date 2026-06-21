@@ -1,0 +1,159 @@
+# ============================================================================
+# TLS-Year22 TEMPORAL EXTRACTION — stratified monthly sampling + month tags.
+# Maps to 7 shared classes. Same seq[30,5] + ctx[6] pipeline. For combined
+# QUIC+TLS temporal+protocol robustness model.
+#
+# Usage:
+#   CESNET_TLS_DATA_DIR=/path/to/CESNET-TLS-Year22  python3 temporal_tls_data_coll
+#   CESNET_TLS_DATA_DIR=...  MJKAN_PUSH_HF=1         python3 temporal_tls_data_coll
+#
+# CESNET-TLS-Year22: https://data.cesnet.cz/research/datasets/cesnet-tls22
+# ============================================================================
+import os, glob, ast
+from pathlib import Path
+from collections import defaultdict
+import numpy as np, pandas as pd
+from dotenv import load_dotenv
+load_dotenv()
+
+def _kaggle_secret(key):
+    try:
+        from kaggle_secrets import UserSecretsClient
+        return UserSecretsClient().get_secret(key) or ""
+    except Exception:
+        return ""
+
+if not os.environ.get("HF_TOKEN"):
+    os.environ["HF_TOKEN"] = _kaggle_secret("HF_TOKEN")
+from huggingface_hub import HfApi, login
+if os.environ.get("HF_TOKEN"):
+    login(token=os.environ["HF_TOKEN"])
+
+# ----------------------------- CONFIG ---------------------------------------
+# Defaults are the Kaggle-mounted paths; override with env vars for local runs.
+BASE      = os.getenv("CESNET_TLS_DATA_DIR", "/kaggle/input/datasets/pranjalkar99/cesnet-22/CESNET-TLS-Year22")
+OUT       = os.path.join(os.getenv("DATA_DIR", "/kaggle/working"), "combined_temporal")
+HF_REPO   = os.getenv("HF_DATASET_REPO", "") or _kaggle_secret("HF_DATASET_REPO")
+HF_FOLDER = "combined_temporal"
+DAYS_PER_MONTH   = 3    # stratified: ~3 evenly-spaced days sampled per month
+PER_CAT_PER_FILE = 600  # flows per mapped category per sampled day
+# ----------------------------------------------------------------------------
+Path(OUT).mkdir(parents=True, exist_ok=True)
+
+# TLS CATEGORY -> 9-class behavioral scheme (7 shared; cdn/ecommerce are QUIC-only)
+TLS_MAP = {
+    "Media":            "video_streaming",
+    "Music":            "audio_streaming",
+    "File sharing":     "file_transfer",
+    "Social":           "social_media",
+    "Search":           "search_info_news",
+    "Instant messaging":"messaging",
+    "Games":            "gaming",
+}
+CLASSES = ["audio_streaming","cdn_web_assets","ecommerce","file_transfer","gaming",
+           "messaging","search_info_news","social_media","video_streaming"]
+cls2idx = {c:i for i,c in enumerate(CLASSES)}
+
+def parse_ppi(s):
+    try:
+        a = ast.literal_eval(s)
+        if len(a) < 3: return None
+        n = min(len(a[0]),len(a[1]),len(a[2]),30)
+        return (a[0][:n],a[1][:n],a[2][:n]) if n >= 3 else None
+    except: return None
+
+def build_seq(times, dirs, sizes):
+    n = len(times); seq = np.zeros((30,5), np.float32)
+    iat = [0.0] + [max(times[i]-times[i-1],0) for i in range(1,n)]
+    jt = [0.0]; J = 0.0
+    for i in range(1,n): D = abs(iat[i]-iat[i-1]); J = J+(D-J)/16.0; jt.append(J)
+    for i in range(n):
+        d  = 1 if dirs[i] > 0 else -1
+        dc = 0 if i == 0 else (1 if (dirs[i]>0) != (dirs[i-1]>0) else 0)
+        seq[i] = [sizes[i]*d, d, iat[i], jt[i], dc]
+    return seq, iat, n
+
+def build_ctx(row, iat, n):
+    dur  = max(float(row["DURATION"]), 1e-3)
+    pkts = float(row["PACKETS"] + row["PACKETS_REV"])
+    up   = float(row["BYTES"]); dn = float(row["BYTES_REV"])
+    ia   = np.array(iat[1:]) if n > 2 else np.array([0.0])
+    raw  = np.array([dur, pkts/dur,
+                     float(row["PPI_ROUNDTRIPS"]) / max(row["PPI_LEN"],1),
+                     up / max(up+dn,1),
+                     float(row["PPI_LEN"]) / max(pkts,1),
+                     ia.std() / (ia.mean()+1e-6)], np.float32)
+    raw[0] = np.log1p(raw[0]); raw[1] = np.log1p(raw[1])
+    return raw
+
+# stratified file selection: ~3 evenly-spaced days per month
+all_files = sorted(glob.glob(os.path.join(BASE,"**","flows-*.csv.xz"), recursive=True))
+if not all_files:
+    # also try uncompressed
+    all_files = sorted(glob.glob(os.path.join(BASE,"**","flows-*.csv"), recursive=True))
+if not all_files:
+    raise RuntimeError(
+        f"No CESNET TLS CSV files found under CESNET_TLS_DATA_DIR={BASE}\n"
+        f"Download from: https://data.cesnet.cz/research/datasets/cesnet-tls22"
+    )
+
+by_month = defaultdict(list)
+for f in all_files:
+    fn = Path(f).name.replace("flows-","")
+    datestr = fn[:8]   # "20220115"
+    try: month = int(datestr[4:6])
+    except: continue
+    by_month[month].append(f)
+
+print(f"months found: {sorted(by_month.keys())}")
+print(f"files per month: { {m:len(by_month[m]) for m in sorted(by_month)} }")
+
+sel_files = []
+for m in range(1,13):
+    fs = by_month[m]
+    if not fs: continue
+    idx = np.linspace(0, len(fs)-1, DAYS_PER_MONTH).astype(int)
+    sel_files += [(m, fs[i]) for i in idx]
+print(f"selected {len(sel_files)} files across {len(by_month)} months")
+
+usecols  = ["PPI","DURATION","BYTES","BYTES_REV","PACKETS","PACKETS_REV","PPI_ROUNDTRIPS","PPI_LEN","CATEGORY","APP"]
+wanted   = set(TLS_MAP.keys())
+SEQ=[]; CTX=[]; Y=[]; MONTH=[]; APP=[]
+
+for mi,(month,f) in enumerate(sel_files):
+    compression = "xz" if f.endswith(".xz") else None
+    try:
+        df = pd.read_csv(f, compression=compression, usecols=usecols)
+    except Exception as e:
+        print(f"  skip {Path(f).name}: {e}"); continue
+    df = df[df["CATEGORY"].isin(wanted)]
+    per_cat = defaultdict(int)
+    for _,r in df.iterrows():
+        cls = TLS_MAP[r["CATEGORY"]]
+        if per_cat[cls] >= PER_CAT_PER_FILE: continue
+        p = parse_ppi(r["PPI"])
+        if p is None: continue
+        seq, iat, n = build_seq(*p)
+        SEQ.append(seq); CTX.append(build_ctx(r,iat,n))
+        Y.append(cls2idx[cls]); MONTH.append(month); APP.append(str(r["APP"]))
+        per_cat[cls] += 1
+    if (mi+1) % 6 == 0 or mi == len(sel_files)-1:
+        print(f"  [{mi+1}/{len(sel_files)}] month{month} done, total={len(SEQ)}")
+
+SEQ=np.stack(SEQ); CTX=np.stack(CTX); Y=np.array(Y); MONTH=np.array(MONTH); APP=np.array(APP)
+print(f"\nTLS temporal: {len(SEQ)} flows")
+print("per-class:", {CLASSES[c]:int((Y==c).sum()) for c in np.unique(Y)})
+print("per-month:", {int(m):int((MONTH==m).sum()) for m in np.unique(MONTH)})
+
+fp = Path(OUT, "tls_temporal.npz")
+np.savez_compressed(str(fp), seq=SEQ, ctx=CTX, label=Y, month=MONTH, app=APP,
+                    protocol=np.array(["tls"]*len(SEQ)))
+print(f"[saved] {fp}")
+
+if os.getenv("MJKAN_PUSH_HF") == "1":
+    if not HF_REPO:
+        print("[hf] skipped — set HF_DATASET_REPO=yourname/your-repo to push")
+    else:
+        api = HfApi()
+        api.upload_file(path_or_fileobj=str(fp), path_in_repo=f"{HF_FOLDER}/{fp.name}", repo_id=HF_REPO)
+        print(f"[hf] pushed {HF_FOLDER}/{fp.name} -> {HF_REPO}")
