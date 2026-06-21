@@ -1,7 +1,7 @@
 # MJKAN-Net: Protocol-Invariant Network Traffic Classification
 
 - **Problem Statement Number** - AX-PS-02
-- **Problem Statement Title** - Network Traffic Classification using AI/ML
+- **Problem Statement Title** - Context-Aware Flow Embeddings for Adaptive AI based Network Traffic Classification
 - **Team name** - Shigan
 - **Team members (Names)** - Shivam Patel, Kavan Gandhi
 - **Institute/College Name** - International Institute of Information Technology, Hyderabad (IIIT-H), Gachibowli, Hyderabad, Telangana 500032
